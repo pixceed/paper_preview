@@ -1,0 +1,10 @@
+numpy
+pandas
+opencv-python
+Flask
+requests
+langchain==0.3.0 
+langchain_community 
+langchain_openai
+langchain_experimental
+langgraph
