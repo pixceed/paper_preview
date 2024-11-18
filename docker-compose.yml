@@ -21,7 +21,7 @@ services:
       # - https_proxy=$https_proxy
       - VITE_APP_IP=$VITE_APP_IP
     ports:
-      - "8534:8534"
+      - "5600:5600"
     stdin_open: true
     tty: true
 
@@ -51,7 +51,7 @@ services:
     devices:
       - /dev/video0:/dev/video0:mwr
     ports:
-      - "5534:5534"
+      - "5601:5601"
     shm_size: '2gb'
     stdin_open: true
     tty: true

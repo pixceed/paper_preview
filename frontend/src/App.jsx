@@ -16,6 +16,7 @@ import {
   BookOpenText,
   ZoomIn,
   ZoomOut,
+  Loader2, // 追加
 } from 'lucide-react';
 
 import ReactMarkdown from 'react-markdown';
@@ -158,6 +159,9 @@ const App = () => {
   // ズームレベルの状態
   const [scale, setScale] = useState(1.0);
 
+  // ローディング状態
+  const [loading, setLoading] = useState(false);
+
   // コンテナの幅を更新する関数
   const updateContainerWidth = () => {
     if (pdfContainerRef.current) {
@@ -248,7 +252,51 @@ const App = () => {
     setChat([]);
   };
 
+  // PDFのテキストを取得するuseEffect
+  useEffect(() => {
+    if (pdfToDisplay) {
+      const processPdf = async () => {
+        try {
+          setLoading(true);
+          let response;
+          if (pdfToDisplay.type === 'file') {
+            const formData = new FormData();
+            formData.append('file', pdfToDisplay.file);
 
+            response = await fetch('http://127.0.0.1:5601/pdf2markdown', {
+              method: 'POST',
+              body: formData,
+              mode: 'cors',
+            });
+          } else if (pdfToDisplay.type === 'url') {
+            response = await fetch('http://127.0.0.1:5601/pdf2markdown', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({ url: pdfToDisplay.url }),
+              mode: 'cors',
+            });
+          }
+
+          if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.error || 'Failed to process PDF');
+          }
+
+          const data = await response.json();
+          setContent(data.text);
+        } catch (error) {
+          console.error('Error processing PDF:', error);
+          alert('PDFの処理中にエラーが発生しました: ' + error.message);
+        } finally {
+          setLoading(false);
+        }
+      };
+
+      processPdf();
+    }
+  }, [pdfToDisplay]);
 
   return (
     <div className="min-h-screen bg-gray-100" onPaste={handlePaste}>
@@ -327,33 +375,44 @@ const App = () => {
                 </TabsList>
               </div>
 
-              <TabsContent
-                value="edit"
-                className="h-[calc(100%-2rem)] w-full"
-              >
-                <Textarea
-                  value={content}
-                  onChange={(e) => setContent(e.target.value)}
-                  className="bg-white h-full resize-none font-mono"
-                  placeholder="マークダウンを入力してください..."
-                />
-              </TabsContent>
+              {loading ? (
+                <div className="flex items-center justify-center h-full">
+                  <div className="flex items-center">
+                    <Loader2 className="animate-spin mr-2 h-5 w-5 text-gray-500" />
+                    <div>PDFからマークダウンに変換中...</div>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <TabsContent
+                    value="edit"
+                    className="h-[calc(100%-2rem)] w-full"
+                  >
+                    <Textarea
+                      value={content}
+                      onChange={(e) => setContent(e.target.value)}
+                      className="bg-white h-full resize-none font-mono"
+                      placeholder="マークダウンを入力してください..."
+                    />
+                  </TabsContent>
 
-              <TabsContent
-                value="preview"
-                className="h-[calc(100%-2rem)] w-full"
-              >
-                <Card className="h-full overflow-auto">
-                  <CardContent className="max-w-none p-4">
-                    <ReactMarkdown
-                      className="markdown"
-                      remarkPlugins={[remarkGfm]}
-                    >
-                      {content}
-                    </ReactMarkdown>
-                  </CardContent>
-                </Card>
-              </TabsContent>
+                  <TabsContent
+                    value="preview"
+                    className="h-[calc(100%-2rem)] w-full"
+                  >
+                    <Card className="h-full overflow-auto">
+                      <CardContent className="max-w-none p-4">
+                        <ReactMarkdown
+                          className="markdown"
+                          remarkPlugins={[remarkGfm]}
+                        >
+                          {content}
+                        </ReactMarkdown>
+                      </CardContent>
+                    </Card>
+                  </TabsContent>
+                </>
+              )}
             </Tabs>
           </div>
 
