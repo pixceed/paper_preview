@@ -17,7 +17,7 @@ import {
   ZoomIn,
   ZoomOut,
   Loader2,
-  Menu, // 追加
+  Menu,
 } from 'lucide-react';
 
 import ReactMarkdown from 'react-markdown';
@@ -33,27 +33,72 @@ import Split from 'react-split';
 // PDF.js のワーカーを設定
 pdfjs.GlobalWorkerOptions.workerSrc = '/pdf.worker.js';
 
+// ヘルパー関数: fetch with timeout
+const fetchWithTimeout = (url, options, timeout = 60000) => {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(
+        new Error('リクエストがタイムアウトしました。後でもう一度お試しください。')
+      );
+    }, timeout);
+
+    fetch(url, options)
+      .then((response) => {
+        clearTimeout(timer);
+        resolve(response);
+      })
+      .catch((err) => {
+        clearTimeout(timer);
+        reject(err);
+      });
+  });
+};
+
 // サイドバーコンポーネントの定義
-const Sidebar = ({ isOpen, onToggle }) => {
+const Sidebar = ({
+  isOpen,
+  onToggle,
+  directories,
+  onSelectDirectory,
+  selectedDirectory,
+}) => {
   return (
     <div
-      className={`fixed top-0 left-0 h-full bg-gray-800 text-white ${
+      className={`fixed top-0 left-0 h-full bg-gray-800 text-white transform ${
         isOpen ? 'translate-x-0' : '-translate-x-full'
       }`}
-      style={{ width: '250px' }}
+      style={{ width: '250px', zIndex: 1000 }}
     >
       <div className="flex items-center p-4 bg-gray-900">
         <button onClick={onToggle} className="focus:outline-none text-white">
           <Menu className="h-7 w-6" />
         </button>
       </div>
-      <div className="p-4 space-y-2">
-        <p>コンテンツ1</p>
-        <p>コンテンツ2</p>
-        <p>コンテンツ3</p>
+      <div className="p-4 space-y-2 overflow-y-auto">
+        {directories.length === 0 ? (
+          <p>ディレクトリがありません</p>
+        ) : (
+          directories.map((dir) => (
+            <button
+              key={dir.dir_name}
+              onClick={() => {
+                if (dir.dir_name !== selectedDirectory) {
+                  onSelectDirectory(dir.dir_name);
+                }
+              }}
+              className={`w-full text-left px-2 py-1 rounded ${
+                dir.dir_name === selectedDirectory
+                  ? 'bg-gray-600'
+                  : 'hover:bg-gray-700'
+              }`}
+            >
+              {dir.display_name}
+            </button>
+          ))
+        )}
       </div>
     </div>
-  )
+  );
 };
 
 // ヘッダーコンポーネントの定義
@@ -186,7 +231,14 @@ const App = () => {
   const [pendingImages, setPendingImages] = useState([]);
 
   const [pdfToDisplay, setPdfToDisplay] = useState(null);
+  const [selectedDirectory, setSelectedDirectory] = useState(null);
   const [numPages, setNumPages] = useState(0);
+
+  // サイドバーコンポーネントのディレクトリ一覧
+  const [directories, setDirectories] = useState([]);
+
+  // 最新のディレクトリ名を保持するための状態
+  const [latestDirectory, setLatestDirectory] = useState(null);
 
   // PDF表示エリアの参照と幅の状態
   const pdfContainerRef = useRef(null);
@@ -198,6 +250,21 @@ const App = () => {
   // ローディング状態
   const [loading, setLoading] = useState(false);
 
+  // マークダウンのローディング状態
+  const [markdownLoading, setMarkdownLoading] = useState(false);
+
+  // マークダウンのエラー状態
+  const [markdownError, setMarkdownError] = useState('');
+
+  // 進捗状況の状態
+  const [processingStatus, setProcessingStatus] = useState('');
+
+  // 中央ペインのスクロール用の参照（プレビューモード専用）
+  const previewContainerRef = useRef(null);
+
+  // 逐次的な表示かどうかを管理する状態
+  const [isAppending, setIsAppending] = useState(false);
+
   // コンテナの幅を更新する関数
   const updateContainerWidth = () => {
     if (pdfContainerRef.current) {
@@ -208,10 +275,35 @@ const App = () => {
     }
   };
 
+  // fetchDirectories 関数を useEffect の外に定義
+  const fetchDirectories = async () => {
+    try {
+      const response = await fetchWithTimeout(
+        'http://127.0.0.1:5601/list_contents',
+        {
+          method: 'GET',
+          mode: 'cors',
+        }
+      );
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'ディレクトリの取得に失敗しました');
+      }
+
+      const data = await response.json();
+      setDirectories(data.directories);
+      console.log('Fetched directories:', data.directories);
+    } catch (error) {
+      console.error('Error fetching directories:', error);
+      alert('ディレクトリの取得中にエラーが発生しました: ' + error.message);
+    }
+  };
+
   // 初回レンダリングと依存関係の変更時に幅を更新
   useLayoutEffect(() => {
     updateContainerWidth();
-  }, [pdfToDisplay]);
+  }, [pdfToDisplay, selectedDirectory]);
 
   // ウィンドウサイズの変更時に幅を更新
   useEffect(() => {
@@ -219,6 +311,11 @@ const App = () => {
     return () => {
       window.removeEventListener('resize', updateContainerWidth);
     };
+  }, []);
+
+  // サイドバーのディレクトリ一覧を取得するuseEffect（初回のみ）
+  useEffect(() => {
+    fetchDirectories();
   }, []);
 
   const handleSend = () => {
@@ -272,70 +369,337 @@ const App = () => {
   function onDocumentLoadSuccess({ numPages }) {
     setNumPages(numPages);
     updateContainerWidth(); // PDF がロードされたら幅を更新
+    console.log(`Loaded PDF with ${numPages} pages.`);
   }
 
   // ズームイン・ズームアウトのハンドラー
   const handleZoomIn = () => {
     setScale((prevScale) => Math.min(prevScale + 0.2, 3.0)); // 最大3倍まで
+    console.log(`Zoomed in to scale: ${scale + 0.2}`);
   };
 
   const handleZoomOut = () => {
     setScale((prevScale) => Math.max(prevScale - 0.2, 0.5)); // 最小0.5倍まで
+    console.log(`Zoomed out to scale: ${scale - 0.2}`);
   };
 
   // チャットのリセットハンドラー
   const handleChatReset = () => {
     setChat([]);
+    console.log('Chat has been reset.');
   };
 
-  // PDFのテキストを取得するuseEffect
+  // contentが更新されたときにスクロール位置を制御
   useEffect(() => {
-    if (pdfToDisplay) {
-      const processPdf = async () => {
+    if (previewContainerRef.current) {
+      if (isAppending) {
+        // 逐次的に追加されている場合は一番下にスクロール
+        previewContainerRef.current.scrollTop = previewContainerRef.current.scrollHeight;
+      } else {
+        // 一括で読み込まれた場合は一番上にスクロール
+        previewContainerRef.current.scrollTop = 0;
+      }
+    }
+  }, [content, isAppending]);
+
+  // PDF処理用のuseEffect
+  useEffect(() => {
+    const processPdf = async () => {
+      if (!pdfToDisplay) return;
+
+      if (pdfToDisplay.type === 'file' || pdfToDisplay.type === 'url') {
         try {
           setLoading(true);
-          let response;
+          setMarkdownLoading(true);
+          setMarkdownError('');
+          setContent(''); // マークダウン内容をリセット
+          setNumPages(0); // ページ数をリセット
+          setScale(1.0); // ズームをリセット
+          setProcessingStatus(''); // 進捗状況をリセット
+
+          const url = 'http://127.0.0.1:5601/pdf2markdown';
+          let options = {
+            method: 'POST',
+            mode: 'cors',
+          };
+
           if (pdfToDisplay.type === 'file') {
             const formData = new FormData();
             formData.append('file', pdfToDisplay.file);
-
-            response = await fetch('http://127.0.0.1:5601/pdf2markdown', {
-              method: 'POST',
-              body: formData,
-              mode: 'cors',
-            });
+            options.body = formData;
           } else if (pdfToDisplay.type === 'url') {
-            response = await fetch('http://127.0.0.1:5601/pdf2markdown', {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-              },
-              body: JSON.stringify({ url: pdfToDisplay.url }),
-              mode: 'cors',
-            });
+            options.headers = {
+              'Content-Type': 'application/json',
+            };
+            options.body = JSON.stringify({ url: pdfToDisplay.url });
           }
+
+          console.log('Starting PDF processing...');
+
+          const response = await fetch(url, options);
 
           if (!response.ok) {
             const errorData = await response.json();
-            throw new Error(errorData.error || 'Failed to process PDF');
+            throw new Error(errorData.error || 'PDFの処理に失敗しました');
           }
 
-          const data = await response.json();
-          setContent(data.text);
+          const reader = response.body.getReader();
+          const decoder = new TextDecoder('utf-8');
+
+          let receivedDirName = '';
+          let receivedBaseFileName = '';
+          let inLLMOutput = false;
+
+          setIsAppending(true); // 逐次的な追加を開始
+
+          while (true) {
+            const { value, done } = await reader.read();
+            if (done) break;
+
+            const chunk = decoder.decode(value, { stream: true });
+            const lines = chunk.split('\n\n');
+
+            for (const line of lines) {
+              if (line.startsWith('data:')) {
+                const dataContent = line.replace('data: ', '');
+                try {
+                  const data = JSON.parse(dataContent);
+
+                  if (data.error) {
+                    throw new Error(data.error);
+                  }
+
+                  if (data.status) {
+                    console.log('Status:', data.status);
+                    // フロントエンドでステータスを表示するために、状態を更新
+                    setProcessingStatus(data.status);
+                  }
+
+                  if (data.llm_output) {
+                    console.log('LLM_OUTPUT:', data.llm_output);
+                    if (data.llm_output === 'start') {
+                      inLLMOutput = true;
+                      setContent(''); // マークダウン内容をリセット
+                    } else if (data.llm_output === 'end') {
+                      inLLMOutput = false;
+                      setIsAppending(false); // 逐次的な追加を終了
+                      setMarkdownLoading(false); // LLM出力終了時にロード状態を解除
+                      setProcessingStatus(''); // 進捗状況をリセット
+                    } else if (inLLMOutput) {
+                      // LLMの出力を逐次的に追加
+                      setContent((prevContent) => prevContent + data.llm_output);
+                    }
+                  }
+
+                  if (data.dir_name) {
+                    receivedDirName = data.dir_name;
+                    receivedBaseFileName = data.base_file_name;
+                  }
+                } catch (e) {
+                  console.error('Error parsing data:', e);
+                }
+              }
+            }
+          }
+
+          const dirName = receivedDirName;
+          const baseFileName = receivedBaseFileName;
+
+          if (!dirName) throw new Error('ディレクトリ名が取得できませんでした');
+
+          console.log('Directory created:', dirName);
+
+          // PDFファイル一覧を取得
+          const pdfFileResponse = await fetchWithTimeout(
+            `http://127.0.0.1:5601/list_files/${dirName}`,
+            {
+              method: 'GET',
+              mode: 'cors',
+            }
+          );
+
+          if (!pdfFileResponse || !pdfFileResponse.ok) {
+            const errorData = pdfFileResponse
+              ? await pdfFileResponse.json()
+              : {};
+            throw new Error(
+              errorData.error || 'ディレクトリ内のファイル一覧の取得に失敗しました'
+            );
+          }
+
+          const pdfFilesData = await pdfFileResponse.json();
+          const pdfFileName = pdfFilesData.pdf_file;
+
+          if (!pdfFileName) {
+            throw new Error('PDFファイル名が取得できませんでした');
+          }
+
+          console.log('PDF file found:', pdfFileName);
+
+          // PDFのURLを設定
+          const newPdfToDisplay = {
+            type: 'saved',
+            url: `http://127.0.0.1:5601/contents/${dirName}/${pdfFileName}`,
+          };
+          setPdfToDisplay(newPdfToDisplay);
+
+          // 最新ディレクトリを設定
+          setLatestDirectory(dirName);
+
+          // サイドバーのディレクトリ一覧を更新
+          await fetchDirectories();
+
+          // 最新ディレクトリを選択
+          setSelectedDirectory(dirName);
         } catch (error) {
           console.error('Error processing PDF:', error);
-          alert('PDFの処理中にエラーが発生しました: ' + error.message);
+          alert('処理中にエラーが発生しました: ' + error.message);
+          setMarkdownLoading(false);
+          setIsAppending(false); // エラー発生時にも追加を終了
         } finally {
           setLoading(false);
         }
-      };
+      }
+    };
 
-      processPdf();
-    }
+    processPdf();
   }, [pdfToDisplay]);
+
+  // ディレクトリ選択時のuseEffect
+  useEffect(() => {
+    const processDirectory = async () => {
+      if (!selectedDirectory) return;
+
+      try {
+        setLoading(true);
+        setMarkdownLoading(true);
+        setMarkdownError('');
+        setContent(''); // マークダウン内容をリセット
+        setNumPages(0); // ページ数をリセット
+        setScale(1.0); // ズームをリセット
+        setProcessingStatus(''); // 進捗状況をリセット
+        setIsAppending(false); // 一括で読み込むため追加を無効化
+
+        const dirName = selectedDirectory;
+
+        console.log('Selected directory:', dirName);
+
+        // ディレクトリ内のマークダウンファイルとPDFファイル一覧を取得
+        const filesResponse = await fetchWithTimeout(
+          `http://127.0.0.1:5601/list_files/${dirName}`,
+          {
+            method: 'GET',
+            mode: 'cors',
+          }
+        );
+
+        if (!filesResponse || !filesResponse.ok) {
+          const errorData = filesResponse ? await filesResponse.json() : {};
+          throw new Error(
+            errorData.error || 'ディレクトリ内のファイル一覧の取得に失敗しました'
+          );
+        }
+
+        const filesData = await filesResponse.json();
+        const markdownFiles = filesData.markdown_files;
+        const pdfFileName = filesData.pdf_file;
+
+        if (!markdownFiles || markdownFiles.length === 0) {
+          throw new Error(
+            '指定されたディレクトリ内にマークダウンファイルが存在しません'
+          );
+        }
+
+        if (!pdfFileName) {
+          throw new Error(
+            '指定されたディレクトリ内にPDFファイルが存在しません'
+          );
+        }
+
+        // ここでは最初のマークダウンファイルを使用
+        const baseFileName = markdownFiles[0].replace(/\.[^/.]+$/, '');
+
+        console.log('Markdown file found:', markdownFiles[0]);
+        console.log('PDF file found:', pdfFileName);
+
+        // PDFのURLを設定
+        setPdfToDisplay({
+          type: 'saved',
+          url: `http://127.0.0.1:5601/contents/${dirName}/${pdfFileName}`,
+        });
+
+        // マークダウンの取得を開始
+        await fetchMarkdownContent(dirName, baseFileName);
+      } catch (error) {
+        console.error('Error processing directory:', error);
+        alert('処理中にエラーが発生しました: ' + error.message);
+        setMarkdownLoading(false);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    const fetchMarkdownContent = async (dirName, baseFileName, retryCount = 0) => {
+      try {
+        const markdownResponse = await fetchWithTimeout(
+          `http://127.0.0.1:5601/contents/${dirName}/${baseFileName}.md`,
+          {
+            method: 'GET',
+            mode: 'cors',
+          }
+        );
+
+        if (!markdownResponse || !markdownResponse.ok) {
+          throw new Error('マークダウンの取得に失敗しました');
+        }
+
+        let markdownContent = await markdownResponse.text();
+        console.log('Fetched markdown content.');
+
+        // マークダウンテキスト内の画像パスを置換
+        markdownContent = markdownContent
+          .replace(
+            /!\[Local Image\]\(picture-(\d+)\.png\)/g,
+            `![Local Image](http://127.0.0.1:5601/contents/${dirName}/picture-$1.png)`
+          )
+          .replace(
+            /!\[Local Image\]\(table-(\d+)\.png\)/g,
+            `![Local Image](http://127.0.0.1:5601/contents/${dirName}/table-$1.png)`
+          );
+
+        setContent(markdownContent);
+        console.log('Set markdown content to state.');
+      } catch (error) {
+        if (retryCount < 5) {
+          console.log('Retrying to fetch markdown...', retryCount);
+          setTimeout(
+            () => fetchMarkdownContent(dirName, baseFileName, retryCount + 1),
+            1000
+          );
+        } else {
+          console.error('Error fetching markdown:', error);
+          setMarkdownError('マークダウンの取得に失敗しました');
+        }
+      } finally {
+        setMarkdownLoading(false);
+      }
+    };
+
+    processDirectory();
+  }, [selectedDirectory]);
 
   const toggleSidebar = () => {
     setSidebarOpen((prev) => !prev);
+    console.log('Toggled sidebar:', !sidebarOpen);
+  };
+
+  const handleSelectDirectory = (dirName) => {
+    setSelectedDirectory(dirName);
+    setPdfToDisplay(null); // 前回のPDFをリセット
+    setContent(''); // マークダウン内容をリセット
+    setMarkdownError('');
+    setMarkdownLoading(true);
+    console.log('Selected directory:', dirName);
   };
 
   return (
@@ -345,9 +709,22 @@ const App = () => {
       }`}
       onPaste={handlePaste}
     >
-      <Sidebar isOpen={sidebarOpen} onToggle={toggleSidebar} />
+      <Sidebar
+        isOpen={sidebarOpen}
+        onToggle={toggleSidebar}
+        directories={directories}
+        onSelectDirectory={handleSelectDirectory}
+        selectedDirectory={selectedDirectory}
+      />
       <Header
-        onPdfSelect={setPdfToDisplay} // 修正: setPdfToDisplay を渡す
+        onPdfSelect={(pdf) => {
+          setPdfToDisplay(pdf);
+          setSelectedDirectory(null); // ディレクトリ選択をリセット
+          setContent(''); // マークダウン内容をリセット
+          setMarkdownError('');
+          setMarkdownLoading(true);
+          setIsAppending(false); // 新しいPDF読み込み時には追加を無効化
+        }}
         onMenuClick={toggleSidebar}
         sidebarOpen={sidebarOpen}
       />
@@ -355,7 +732,7 @@ const App = () => {
         <Split
           className="split h-full flex"
           gutterSize={12}
-          sizes={[30, 40, 30]} // デフォルトの比率
+          sizes={[30, 40, 30]}
           minSize={200}
           expandToMin={false}
           gutterAlign="center"
@@ -387,13 +764,26 @@ const App = () => {
                 >
                   <Document
                     file={
-                      pdfToDisplay.type === 'url'
+                      pdfToDisplay.type === 'url' ||
+                      pdfToDisplay.type === 'saved'
                         ? pdfToDisplay.url
                         : pdfToDisplay.type === 'file'
                         ? pdfToDisplay.file
                         : null
                     }
                     onLoadSuccess={onDocumentLoadSuccess}
+                    loading={
+                      <div className="flex items-center justify-center h-full">
+                        <Loader2 className="animate-spin mr-2 h-5 w-5 text-gray-500" />
+                        <div>PDF読み込み中...</div>
+                      </div>
+                    }
+                    error={
+                      <div className="flex items-center justify-center h-full">
+                        <Loader2 className="animate-spin mr-2 h-5 w-5 text-gray-500" />
+                        <div>PDF読み込み中...</div>
+                      </div>
+                    }
                   >
                     {numPages > 0 &&
                       containerWidth &&
@@ -415,8 +805,8 @@ const App = () => {
           </div>
 
           {/* 中央ペイン（マークダウンエディタ/プレビュー） */}
-          <div className="flex flex-col">
-            <Tabs defaultValue="edit" className="h-full pb-3">
+          <div className="flex flex-col relative">
+            <Tabs defaultValue="preview" className="h-full pb-3">
               <div className="flex justify-end mb-2">
                 <TabsList>
                   <TabsTrigger value="edit">編集モード</TabsTrigger>
@@ -424,43 +814,45 @@ const App = () => {
                 </TabsList>
               </div>
 
-              {loading ? (
-                <div className="flex items-center justify-center h-full">
+              <>
+                <TabsContent
+                  value="edit"
+                  className="h-[calc(100%-2rem)] w-full"
+                >
+                  <Textarea
+                    value={content}
+                    onChange={(e) => setContent(e.target.value)}
+                    className="bg-white h-full resize-none font-mono"
+                    placeholder="マークダウンを入力してください..."
+                  />
+                </TabsContent>
+
+                <TabsContent
+                  value="preview"
+                  className="h-[calc(100%-2rem)] w-full"
+                >
+                  <Card className="h-full overflow-auto" ref={previewContainerRef}>
+                    <CardContent className="max-w-none p-4">
+                      <ReactMarkdown
+                        className="markdown"
+                        remarkPlugins={[remarkGfm]}
+                      >
+                        {content}
+                      </ReactMarkdown>
+                    </CardContent>
+                  </Card>
+                </TabsContent>
+              </>
+
+              {markdownLoading && (
+                <div className="absolute top-0 left-0 right-0 bottom-0 flex items-center justify-center bg-white bg-opacity-75">
                   <div className="flex items-center">
                     <Loader2 className="animate-spin mr-2 h-5 w-5 text-gray-500" />
-                    <div>PDFからマークダウンに変換中...</div>
+                    <div>
+                      {processingStatus || 'マークダウン読み込み中...'}
+                    </div>
                   </div>
                 </div>
-              ) : (
-                <>
-                  <TabsContent
-                    value="edit"
-                    className="h-[calc(100%-2rem)] w-full"
-                  >
-                    <Textarea
-                      value={content}
-                      onChange={(e) => setContent(e.target.value)}
-                      className="bg-white h-full resize-none font-mono"
-                      placeholder="マークダウンを入力してください..."
-                    />
-                  </TabsContent>
-
-                  <TabsContent
-                    value="preview"
-                    className="h-[calc(100%-2rem)] w-full"
-                  >
-                    <Card className="h-full overflow-auto">
-                      <CardContent className="max-w-none p-4">
-                        <ReactMarkdown
-                          className="markdown"
-                          remarkPlugins={[remarkGfm]}
-                        >
-                          {content}
-                        </ReactMarkdown>
-                      </CardContent>
-                    </Card>
-                  </TabsContent>
-                </>
               )}
             </Tabs>
           </div>
