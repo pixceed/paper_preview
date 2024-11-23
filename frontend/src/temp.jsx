@@ -33,11 +33,10 @@ import Split from 'react-split';
 // PDF.js のワーカーを設定
 pdfjs.GlobalWorkerOptions.workerSrc = '/pdf.worker.js';
 
-// サイドバーコンポーネントの定義
 const Sidebar = ({ isOpen, onToggle }) => {
   return (
     <div
-      className={`fixed top-0 left-0 h-full bg-gray-800 text-white ${
+      className={`fixed top-0 left-0 h-full bg-gray-800 text-white transition-transform duration-300 ${
         isOpen ? 'translate-x-0' : '-translate-x-full'
       }`}
       style={{ width: '250px' }}
@@ -46,6 +45,7 @@ const Sidebar = ({ isOpen, onToggle }) => {
         <button onClick={onToggle} className="focus:outline-none text-white">
           <Menu className="h-7 w-6" />
         </button>
+
       </div>
       <div className="p-4 space-y-2">
         <p>コンテンツ1</p>
@@ -53,10 +53,9 @@ const Sidebar = ({ isOpen, onToggle }) => {
         <p>コンテンツ3</p>
       </div>
     </div>
-  )
+  );
 };
 
-// ヘッダーコンポーネントの定義
 const Header = ({ onPdfSelect, onMenuClick, sidebarOpen }) => {
   const [pdfUrl, setPdfUrl] = useState('');
   const [selectedFile, setSelectedFile] = useState(null);
@@ -80,7 +79,7 @@ const Header = ({ onPdfSelect, onMenuClick, sidebarOpen }) => {
       )}
       <div className="px-4 py-3 flex-1">
         <div className="flex items-center justify-between">
-          <h1 className="text-2xl font-bold text-primary">AI Scholar Reader</h1>
+          <h1 className="text-2xl font-bold text-primary">論文読み読みくん</h1>
           <Tabs defaultValue="file" className="w-[600px]">
             <div className="flex items-center gap-4">
               <TabsList className="h-9 p-1 bg-muted">
@@ -174,7 +173,6 @@ const Header = ({ onPdfSelect, onMenuClick, sidebarOpen }) => {
       </div>
     </header>
   );
-
 };
 
 const App = () => {
@@ -187,6 +185,9 @@ const App = () => {
 
   const [pdfToDisplay, setPdfToDisplay] = useState(null);
   const [numPages, setNumPages] = useState(0);
+
+  // サイドバーの状態を追加
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
   // PDF表示エリアの参照と幅の状態
   const pdfContainerRef = useRef(null);
@@ -250,23 +251,6 @@ const App = () => {
 
   const handleRemoveImage = (index) => {
     setPendingImages(pendingImages.filter((_, i) => i !== index));
-  };
-
-  const handlePaste = (e) => {
-    const items = e.clipboardData.items;
-    const images = [];
-    for (let i = 0; i < items.length; i++) {
-      const item = items[i];
-      if (item.type.startsWith('image/')) {
-        const file = item.getAsFile();
-        if (file) {
-          images.push(URL.createObjectURL(file));
-        }
-      }
-    }
-    if (images.length > 0) {
-      setPendingImages([...pendingImages, ...images]);
-    }
   };
 
   function onDocumentLoadSuccess({ numPages }) {
@@ -343,225 +327,224 @@ const App = () => {
       className={`min-h-screen bg-gray-100 transition-transform duration-300 ${
         sidebarOpen ? 'pl-[250px]' : ''
       }`}
-      onPaste={handlePaste}
     >
       <Sidebar isOpen={sidebarOpen} onToggle={toggleSidebar} />
       <Header
-        onPdfSelect={setPdfToDisplay} // 修正: setPdfToDisplay を渡す
+        onPdfSelect={(pdf) => console.log(pdf)}
         onMenuClick={toggleSidebar}
         sidebarOpen={sidebarOpen}
       />
       <main className="mx-auto p-4 h-[calc(100vh-4rem)]">
-        <Split
-          className="split h-full flex"
-          gutterSize={12}
-          sizes={[30, 40, 30]} // デフォルトの比率
-          minSize={200}
-          expandToMin={false}
-          gutterAlign="center"
-          snapOffset={30}
-          dragInterval={1}
-          direction="horizontal"
-          cursor="col-resize"
-        >
-          {/* 左ペイン（PDFビューア） */}
-          <div className="flex flex-col">
-            {pdfToDisplay ? (
-              <>
-                <div className="flex justify-end mb-3">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={handleZoomOut}
-                    className="mr-2"
-                  >
-                    <ZoomOut className="h-4 w-4" />
-                  </Button>
-                  <Button variant="outline" size="sm" onClick={handleZoomIn}>
-                    <ZoomIn className="h-4 w-4" />
-                  </Button>
-                </div>
-                <div
-                  className="rounded-lg h-full overflow-auto border"
-                  ref={pdfContainerRef}
-                >
-                  <Document
-                    file={
-                      pdfToDisplay.type === 'url'
-                        ? pdfToDisplay.url
-                        : pdfToDisplay.type === 'file'
-                        ? pdfToDisplay.file
-                        : null
-                    }
-                    onLoadSuccess={onDocumentLoadSuccess}
-                  >
-                    {numPages > 0 &&
-                      containerWidth &&
-                      Array.from({ length: numPages }, (_, index) => (
-                        <Page
-                          key={`page_${index + 1}`}
-                          pageNumber={index + 1}
-                          width={containerWidth * scale}
-                        />
-                      ))}
-                  </Document>
-                </div>
-              </>
-            ) : (
-              <div className="bg-white rounded-lg h-full mt-11 flex items-center justify-center border">
-                PDFが選択されていません
-              </div>
-            )}
-          </div>
-
-          {/* 中央ペイン（マークダウンエディタ/プレビュー） */}
-          <div className="flex flex-col">
-            <Tabs defaultValue="edit" className="h-full pb-3">
-              <div className="flex justify-end mb-2">
-                <TabsList>
-                  <TabsTrigger value="edit">編集モード</TabsTrigger>
-                  <TabsTrigger value="preview">プレビューモード</TabsTrigger>
-                </TabsList>
-              </div>
-
-              {loading ? (
-                <div className="flex items-center justify-center h-full">
-                  <div className="flex items-center">
-                    <Loader2 className="animate-spin mr-2 h-5 w-5 text-gray-500" />
-                    <div>PDFからマークダウンに変換中...</div>
-                  </div>
-                </div>
-              ) : (
+      <Split
+            className="split h-full flex"
+            gutterSize={12}
+            sizes={[30, 40, 30]} // デフォルトの比率
+            minSize={200}
+            expandToMin={false}
+            gutterAlign="center"
+            snapOffset={30}
+            dragInterval={1}
+            direction="horizontal"
+            cursor="col-resize"
+          >
+            {/* 左ペイン（PDFビューア） */}
+            <div className="flex flex-col">
+              {pdfToDisplay ? (
                 <>
-                  <TabsContent
-                    value="edit"
-                    className="h-[calc(100%-2rem)] w-full"
+                  <div className="flex justify-end mb-3">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={handleZoomOut}
+                      className="mr-2"
+                    >
+                      <ZoomOut className="h-4 w-4" />
+                    </Button>
+                    <Button variant="outline" size="sm" onClick={handleZoomIn}>
+                      <ZoomIn className="h-4 w-4" />
+                    </Button>
+                  </div>
+                  <div
+                    className="rounded-lg h-full overflow-auto border"
+                    ref={pdfContainerRef}
                   >
-                    <Textarea
-                      value={content}
-                      onChange={(e) => setContent(e.target.value)}
-                      className="bg-white h-full resize-none font-mono"
-                      placeholder="マークダウンを入力してください..."
-                    />
-                  </TabsContent>
-
-                  <TabsContent
-                    value="preview"
-                    className="h-[calc(100%-2rem)] w-full"
-                  >
-                    <Card className="h-full overflow-auto">
-                      <CardContent className="max-w-none p-4">
-                        <ReactMarkdown
-                          className="markdown"
-                          remarkPlugins={[remarkGfm]}
-                        >
-                          {content}
-                        </ReactMarkdown>
-                      </CardContent>
-                    </Card>
-                  </TabsContent>
+                    <Document
+                      file={
+                        pdfToDisplay.type === 'url'
+                          ? pdfToDisplay.url
+                          : pdfToDisplay.type === 'file'
+                          ? pdfToDisplay.file
+                          : null
+                      }
+                      onLoadSuccess={onDocumentLoadSuccess}
+                    >
+                      {numPages > 0 &&
+                        containerWidth &&
+                        Array.from({ length: numPages }, (_, index) => (
+                          <Page
+                            key={`page_${index + 1}`}
+                            pageNumber={index + 1}
+                            width={containerWidth * scale}
+                          />
+                        ))}
+                    </Document>
+                  </div>
                 </>
+              ) : (
+                <div className="bg-white rounded-lg h-full mt-11 flex items-center justify-center border">
+                  PDFが選択されていません
+                </div>
               )}
-            </Tabs>
-          </div>
-
-          {/* 右ペイン（チャットエリア） */}
-          <div className="flex flex-col">
-            {/* リセットボタンを追加 */}
-            <div className="pb-3 flex justify-end items-center">
-              <Button variant="outline" size="sm" onClick={handleChatReset}>
-                リセット
-              </Button>
             </div>
 
-            <Card className="h-[calc(100%-2.6rem)] flex flex-col">
-              <CardContent className="flex-1 overflow-auto p-4">
-                <div className="space-y-4">
-                  {chat.map((msg, i) => (
-                    <div
-                      key={i}
-                      className={`flex ${
-                        msg.role === 'user' ? 'justify-end' : 'justify-start'
-                      }`}
-                    >
-                      {msg.type === 'text' ? (
-                        <div className="rounded-lg px-4 py-2 max-w-[80%] bg-primary text-primary-foreground">
-                          <div className="whitespace-pre-wrap">
-                            {msg.content}
-                          </div>
-                        </div>
-                      ) : (
-                        <img
-                          src={msg.content}
-                          alt="Uploaded"
-                          className="rounded-lg max-w-[80%] border"
-                        />
-                      )}
-                    </div>
-                  ))}
+            {/* 中央ペイン（マークダウンエディタ/プレビュー） */}
+            <div className="flex flex-col">
+              <Tabs defaultValue="preview" className="h-full pb-3">
+                <div className="flex justify-end mb-2">
+                  <TabsList>
+                    <TabsTrigger value="edit">編集モード</TabsTrigger>
+                    <TabsTrigger value="preview">プレビューモード</TabsTrigger>
+                  </TabsList>
                 </div>
-              </CardContent>
 
-              <div className="p-4 border-t">
-                {pendingImages.length > 0 && (
-                  <div className="grid grid-cols-3 gap-2 mb-4">
-                    {pendingImages.map((image, index) => (
-                      <div key={index} className="relative">
-                        <img
-                          src={image}
-                          alt={`Pending ${index}`}
-                          className="rounded-lg max-w-full max-h-40 border"
-                        />
-                        <button
-                          onClick={() => handleRemoveImage(index)}
-                          className="absolute top-1 right-1 bg-white rounded-full p-1 shadow"
-                        >
-                          <X className="h-4 w-4 text-red-500" />
-                        </button>
+                {loading ? (
+                  <div className="flex items-center justify-center h-full">
+                    <div className="flex items-center">
+                      <Loader2 className="animate-spin mr-2 h-5 w-5 text-gray-500" />
+                      <div>PDFからマークダウンに変換中...</div>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <TabsContent
+                      value="edit"
+                      className="h-[calc(100%-2rem)] w-full"
+                    >
+                      <Textarea
+                        value={content}
+                        onChange={(e) => setContent(e.target.value)}
+                        className="bg-white h-full resize-none font-mono"
+                        placeholder="マークダウンを入力してください..."
+                      />
+                    </TabsContent>
+
+                    <TabsContent
+                      value="preview"
+                      className="h-[calc(100%-2rem)] w-full"
+                    >
+                      <Card className="h-full overflow-auto">
+                        <CardContent className="max-w-none p-4">
+                          <ReactMarkdown
+                            className="markdown"
+                            remarkPlugins={[remarkGfm]}
+                          >
+                            {content}
+                          </ReactMarkdown>
+                        </CardContent>
+                      </Card>
+                    </TabsContent>
+                  </>
+                )}
+              </Tabs>
+            </div>
+
+            {/* 右ペイン（チャットエリア） */}
+            <div className="flex flex-col">
+              {/* リセットボタンを追加 */}
+              <div className="pb-3 flex justify-end items-center">
+                <Button variant="outline" size="sm" onClick={handleChatReset}>
+                  リセット
+                </Button>
+              </div>
+
+              <Card className="h-[calc(100%-2.6rem)] flex flex-col">
+                <CardContent className="flex-1 overflow-auto p-4">
+                  <div className="space-y-4">
+                    {chat.map((msg, i) => (
+                      <div
+                        key={i}
+                        className={`flex ${
+                          msg.role === 'user' ? 'justify-end' : 'justify-start'
+                        }`}
+                      >
+                        {msg.type === 'text' ? (
+                          <div className="rounded-lg px-4 py-2 max-w-[80%] bg-primary text-primary-foreground">
+                            <div className="whitespace-pre-wrap">
+                              {msg.content}
+                            </div>
+                          </div>
+                        ) : (
+                          <img
+                            src={msg.content}
+                            alt="Uploaded"
+                            className="rounded-lg max-w-[80%] border"
+                          />
+                        )}
                       </div>
                     ))}
                   </div>
-                )}
-                <div className="flex gap-2">
-                  <Textarea
-                    value={message}
-                    onChange={(e) => setMessage(e.target.value)}
-                    placeholder="メッセージを入力..."
-                    className="resize-none"
-                    rows={3}
-                  />
+                </CardContent>
 
-                  <div className="flex flex-col gap-2">
-                    <Button
-                      className="self-end"
-                      size="icon"
-                      onClick={() =>
-                        document.getElementById('image-input').click()
-                      }
-                    >
-                      <Image className="h-4 w-4" />
-                    </Button>
-                    <Button
-                      onClick={handleSend}
-                      className="self-end"
-                      size="icon"
-                    >
-                      <Send className="h-4 w-4" />
-                    </Button>
+                <div className="p-4 border-t">
+                  {pendingImages.length > 0 && (
+                    <div className="grid grid-cols-3 gap-2 mb-4">
+                      {pendingImages.map((image, index) => (
+                        <div key={index} className="relative">
+                          <img
+                            src={image}
+                            alt={`Pending ${index}`}
+                            className="rounded-lg max-w-full max-h-40 border"
+                          />
+                          <button
+                            onClick={() => handleRemoveImage(index)}
+                            className="absolute top-1 right-1 bg-white rounded-full p-1 shadow"
+                          >
+                            <X className="h-4 w-4 text-red-500" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <div className="flex gap-2">
+                    <Textarea
+                      value={message}
+                      onChange={(e) => setMessage(e.target.value)}
+                      placeholder="メッセージを入力..."
+                      className="resize-none"
+                      rows={3}
+                    />
+
+                    <div className="flex flex-col gap-2">
+                      <Button
+                        className="self-end"
+                        size="icon"
+                        onClick={() =>
+                          document.getElementById('image-input').click()
+                        }
+                      >
+                        <Image className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        onClick={handleSend}
+                        className="self-end"
+                        size="icon"
+                      >
+                        <Send className="h-4 w-4" />
+                      </Button>
+                    </div>
+                    <input
+                      id="image-input"
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      multiple
+                      onChange={handleImageUpload}
+                    />
                   </div>
-                  <input
-                    id="image-input"
-                    type="file"
-                    accept="image/*"
-                    className="hidden"
-                    multiple
-                    onChange={handleImageUpload}
-                  />
                 </div>
-              </div>
-            </Card>
-          </div>
-        </Split>
+              </Card>
+            </div>
+          </Split>
       </main>
     </div>
   );
