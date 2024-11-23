@@ -145,9 +145,6 @@ def pdf2markdown():
 
     return Response(generate(), mimetype='text/event-stream')
 
-
-
-
 def extract_text_from_pdf(pdf_stream, file_name):
     """
     PDFストリームからテキストを抽出し、マークダウンに変換して保存する。
@@ -221,7 +218,6 @@ def extract_text_from_pdf(pdf_stream, file_name):
     with get_openai_callback() as cb:
 
         # LLMで調整
-        # chat_model = ChatOpenAI(model="gpt-4o-2024-11-20", temperature=0)
         chat_model = ChatOpenAI(model="gpt-4o-mini", temperature=0, streaming=True)
         system_prompt = SystemMessage(
             content=\
@@ -236,9 +232,6 @@ def extract_text_from_pdf(pdf_stream, file_name):
         )
         image_message = HumanMessage(content=md_text)
         messages = [system_prompt, image_message]
-        # result = chat_model.invoke(messages)
-        # result_text = result.content
-        # result_text = result_text.replace("```markdown", "").replace("```", "")
 
         for result in chat_model.stream(messages):
             result_text += result.content
@@ -267,6 +260,86 @@ def extract_text_from_pdf(pdf_stream, file_name):
     # 保存先のディレクトリ名を返す
     yield json.dumps({"dir_name": dir_name, "base_file_name": base_name})
 
+# 追加: マークダウンを日本語に翻訳するエンドポイント
+@app.route('/trans_markdown', methods=['POST'])
+def trans_markdown():
+    @stream_with_context
+    def generate():
+        try:
+            data = request.get_json()
+            dir_name = data.get('dir_name')
+            if not dir_name:
+                yield f'data: {json.dumps({"error": "dir_name is required"})}\n\n'
+                return
+
+            dir_path = os.path.join(CONTENT_DATA_DIR, dir_name)
+            if not os.path.isdir(dir_path):
+                yield f'data: {json.dumps({"error": "Directory not found"})}\n\n'
+                return
+
+            # originが付くマークダウンファイルを取得
+            files = os.listdir(dir_path)
+            origin_md_files = [f for f in files if f.lower().endswith('_origin.md')]
+            if not origin_md_files:
+                yield f'data: {json.dumps({"error": "Origin markdown file not found"})}\n\n'
+                return
+
+            origin_md_file = origin_md_files[0]
+            origin_md_path = os.path.join(dir_path, origin_md_file)
+            base_name = os.path.splitext(origin_md_file)[0].replace('_origin', '')
+
+            # マークダウンテキストを読み込む
+            with open(origin_md_path, 'r', encoding='utf-8') as f:
+                md_text = f.read()
+
+            yield f'data: {json.dumps({"status": "Translating to Japanese..."})}\n\n'
+
+            yield f'data: {json.dumps({"llm_output": "start"})}\n\n'
+            result_text = ""
+
+            with get_openai_callback() as cb:
+                # LLMで翻訳
+                chat_model = ChatOpenAI(model="gpt-4o-mini", temperature=0, streaming=True)
+                system_prompt = SystemMessage(
+                    content=\
+    """
+    以下のマークダウン文書を日本語に翻訳してください。
+    コードブロックやマークダウンの書式はそのままにしてください。
+    見出し部分は、翻訳せず原文そのままとしてください。
+
+    出力は、必ずマークダウン文章のみで、余計な文章は含めないでください。
+    """
+                )
+                translate_message = HumanMessage(content=md_text)
+                messages = [system_prompt, translate_message]
+
+                for result in chat_model.stream(messages):
+                    result_text += result.content
+                    if result == '':
+                        continue
+                    yield f'data: {json.dumps({"llm_output": result.content})}\n\n'
+
+                print(f"\nTotal Tokens: {cb.total_tokens}")
+                print(f"Prompt Tokens: {cb.prompt_tokens}")
+                print(f"Completion Tokens: {cb.completion_tokens}")
+                print(f"Total Cost (USD): ${cb.total_cost}\n")
+            
+            yield f'data: {json.dumps({"llm_output": "end"})}\n\n'
+
+            # 翻訳結果を保存
+            ja_md_filename = os.path.join(dir_path, f"{base_name}_trans.md")
+            with open(ja_md_filename, mode="w", encoding="utf-8") as f:
+                f.write(result_text)
+
+            yield f'data: {json.dumps({"status": "Translation completed", "base_file_name": base_name})}\n\n'
+
+        except Exception as e:
+            error_traceback = traceback.format_exc()
+            print(error_traceback)
+            yield f'data: {json.dumps({"error": f"Error during translation: {str(e)}"})}\n\n'
+            return
+
+    return Response(generate(), mimetype='text/event-stream')
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5601, debug=True)

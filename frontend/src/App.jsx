@@ -125,7 +125,7 @@ const Header = ({ onPdfSelect, onMenuClick, sidebarOpen }) => {
       )}
       <div className="px-4 py-3 flex-1">
         <div className="flex items-center justify-between">
-          <h1 className="text-2xl font-bold text-primary">AI Scholar Reader</h1>
+          <h1 className="text-2xl font-bold text-primary">Smart Scholar Reader</h1>
           <Tabs defaultValue="file" className="w-[600px]">
             <div className="flex items-center gap-4">
               <TabsList className="h-9 p-1 bg-muted">
@@ -219,7 +219,6 @@ const Header = ({ onPdfSelect, onMenuClick, sidebarOpen }) => {
       </div>
     </header>
   );
-
 };
 
 const App = () => {
@@ -264,6 +263,16 @@ const App = () => {
 
   // 逐次的な表示かどうかを管理する状態
   const [isAppending, setIsAppending] = useState(false);
+
+  // 翻訳ボタンの状態
+  const [showTranslateButton, setShowTranslateButton] = useState(false);
+  const [showJapaneseButton, setShowJapaneseButton] = useState(false);
+
+  // 現在表示しているマークダウンファイルの種類（'origin' または 'trans'）
+  const [currentMarkdownType, setCurrentMarkdownType] = useState('origin');
+
+  // baseFileNameを保持
+  const [baseFileName, setBaseFileName] = useState('');
 
   // コンテナの幅を更新する関数
   const updateContainerWidth = () => {
@@ -416,6 +425,10 @@ const App = () => {
           setNumPages(0); // ページ数をリセット
           setScale(1.0); // ズームをリセット
           setProcessingStatus(''); // 進捗状況をリセット
+          setShowTranslateButton(false);
+          setShowJapaneseButton(false);
+          setCurrentMarkdownType('origin');
+          setBaseFileName('');
 
           const url = 'http://127.0.0.1:5601/pdf2markdown';
           let options = {
@@ -485,6 +498,15 @@ const App = () => {
                       setIsAppending(false); // 逐次的な追加を終了
                       setMarkdownLoading(false); // LLM出力終了時にロード状態を解除
                       setProcessingStatus(''); // 進捗状況をリセット
+                      // 翻訳済みファイルの存在をチェック
+                      if (data.translation_exists) {
+                        setShowJapaneseButton(true);
+                        setShowTranslateButton(false);
+                      } else {
+                        setShowJapaneseButton(false);
+                        setShowTranslateButton(true);
+                      }
+                      setCurrentMarkdownType('origin');
                     } else if (inLLMOutput) {
                       // LLMの出力を逐次的に追加
                       setContent((prevContent) => prevContent + data.llm_output);
@@ -529,6 +551,7 @@ const App = () => {
 
           const pdfFilesData = await pdfFileResponse.json();
           const pdfFileName = pdfFilesData.pdf_file;
+          const markdownFiles = pdfFilesData.markdown_files;
 
           if (!pdfFileName) {
             throw new Error('PDFファイル名が取得できませんでした');
@@ -551,6 +574,22 @@ const App = () => {
 
           // 最新ディレクトリを選択
           setSelectedDirectory(dirName);
+
+          // baseFileNameを設定
+          setBaseFileName(baseFileName);
+
+          // 翻訳済みファイルの存在をチェック
+          const transMarkdownFile = markdownFiles.find((name) =>
+            name.endsWith('_trans.md')
+          );
+
+          if (transMarkdownFile) {
+            setShowJapaneseButton(true);
+            setShowTranslateButton(false);
+          } else {
+            setShowJapaneseButton(false);
+            setShowTranslateButton(true);
+          }
         } catch (error) {
           console.error('Error processing PDF:', error);
           alert('処理中にエラーが発生しました: ' + error.message);
@@ -579,6 +618,10 @@ const App = () => {
         setScale(1.0); // ズームをリセット
         setProcessingStatus(''); // 進捗状況をリセット
         setIsAppending(false); // 一括で読み込むため追加を無効化
+        setShowTranslateButton(false);
+        setShowJapaneseButton(false);
+        setCurrentMarkdownType('origin');
+        setBaseFileName('');
 
         const dirName = selectedDirectory;
 
@@ -604,7 +647,7 @@ const App = () => {
         const markdownFiles = filesData.markdown_files;
         const pdfFileName = filesData.pdf_file;
 
-        if (!markdownFiles || markdownFiles.length === 0) {
+        if (!markdownFiles || !markdownFiles.length) {
           throw new Error(
             '指定されたディレクトリ内にマークダウンファイルが存在しません'
           );
@@ -616,11 +659,35 @@ const App = () => {
           );
         }
 
-        // ここでは最初のマークダウンファイルを使用
-        const baseFileName = markdownFiles[0].replace(/\.[^/.]+$/, '');
+        // baseFileNameを設定
+        const originMarkdownFile = markdownFiles.find((name) =>
+          name.endsWith('_origin.md')
+        );
 
-        console.log('Markdown file found:', markdownFiles[0]);
+        if (!originMarkdownFile) {
+          throw new Error(
+            '指定されたディレクトリ内に_origin.mdファイルが存在しません'
+          );
+        }
+
+        const baseFileName = originMarkdownFile.replace('_origin.md', '');
+        setBaseFileName(baseFileName);
+
+        console.log('Markdown file found:', originMarkdownFile);
         console.log('PDF file found:', pdfFileName);
+
+        // 翻訳済みファイルの存在をチェック
+        const transMarkdownFile = markdownFiles.find((name) =>
+          name.endsWith('_trans.md')
+        );
+
+        if (transMarkdownFile) {
+          setShowJapaneseButton(true);
+          setShowTranslateButton(false);
+        } else {
+          setShowJapaneseButton(false);
+          setShowTranslateButton(true);
+        }
 
         // PDFのURLを設定
         setPdfToDisplay({
@@ -629,59 +696,13 @@ const App = () => {
         });
 
         // マークダウンの取得を開始
-        await fetchMarkdownContent(dirName, baseFileName);
+        await fetchMarkdownContent(dirName, baseFileName, 'origin');
       } catch (error) {
         console.error('Error processing directory:', error);
         alert('処理中にエラーが発生しました: ' + error.message);
         setMarkdownLoading(false);
       } finally {
         setLoading(false);
-      }
-    };
-
-    const fetchMarkdownContent = async (dirName, baseFileName, retryCount = 0) => {
-      try {
-        const markdownResponse = await fetchWithTimeout(
-          `http://127.0.0.1:5601/contents/${dirName}/${baseFileName}.md`,
-          {
-            method: 'GET',
-            mode: 'cors',
-          }
-        );
-
-        if (!markdownResponse || !markdownResponse.ok) {
-          throw new Error('マークダウンの取得に失敗しました');
-        }
-
-        let markdownContent = await markdownResponse.text();
-        console.log('Fetched markdown content.');
-
-        // マークダウンテキスト内の画像パスを置換
-        markdownContent = markdownContent
-          .replace(
-            /!\[Local Image\]\(picture-(\d+)\.png\)/g,
-            `![Local Image](http://127.0.0.1:5601/contents/${dirName}/picture-$1.png)`
-          )
-          .replace(
-            /!\[Local Image\]\(table-(\d+)\.png\)/g,
-            `![Local Image](http://127.0.0.1:5601/contents/${dirName}/table-$1.png)`
-          );
-
-        setContent(markdownContent);
-        console.log('Set markdown content to state.');
-      } catch (error) {
-        if (retryCount < 5) {
-          console.log('Retrying to fetch markdown...', retryCount);
-          setTimeout(
-            () => fetchMarkdownContent(dirName, baseFileName, retryCount + 1),
-            1000
-          );
-        } else {
-          console.error('Error fetching markdown:', error);
-          setMarkdownError('マークダウンの取得に失敗しました');
-        }
-      } finally {
-        setMarkdownLoading(false);
       }
     };
 
@@ -699,7 +720,245 @@ const App = () => {
     setContent(''); // マークダウン内容をリセット
     setMarkdownError('');
     setMarkdownLoading(true);
+    setIsAppending(false);
     console.log('Selected directory:', dirName);
+  };
+
+  // +翻訳ボタンのクリックハンドラー
+  const handleTranslate = async () => {
+    if (!selectedDirectory || !baseFileName) {
+      alert('ディレクトリまたはファイル名が不明です');
+      return;
+    }
+
+    try {
+      setMarkdownLoading(true);
+      setProcessingStatus('翻訳中...'); // 進捗状況を設定
+      setIsAppending(true); // 逐次的な追加を開始
+      setContent(''); // マークダウン内容をリセット
+
+      const url = 'http://127.0.0.1:5601/trans_markdown';
+      const options = {
+        method: 'POST',
+        mode: 'cors',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ dir_name: selectedDirectory }),
+      };
+
+      const response = await fetch(url, options);
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || '翻訳の処理に失敗しました');
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder('utf-8');
+
+      let inLLMOutput = false;
+      let buffer = '';
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+
+        const chunk = decoder.decode(value, { stream: true });
+        buffer += chunk;
+
+        // data: で始まり、\n\n で終わるメッセージをパース
+        let messages = buffer.split('\n\n');
+        buffer = messages.pop(); // 未完了のメッセージをバッファに残す
+
+        for (const message of messages) {
+          if (message.startsWith('data:')) {
+            const dataContent = message.slice('data: '.length);
+            try {
+              const data = JSON.parse(dataContent);
+
+              if (data.error) {
+                throw new Error(data.error);
+              }
+
+              if (data.status) {
+                console.log('Status:', data.status);
+                setProcessingStatus(data.status);
+              }
+
+              if (data.llm_output) {
+                //console.log('LLM_OUTPUT:', data.llm_output);
+                if (data.llm_output === 'start') {
+                  inLLMOutput = true;
+                  setContent(''); // マークダウン内容をリセット
+                } else if (data.llm_output === 'end') {
+                  inLLMOutput = false;
+                  setIsAppending(false); // 逐次的な追加を終了
+                  setMarkdownLoading(false); // LLM出力終了時にロード状態を解除
+                  setProcessingStatus(''); // 進捗状況をリセット
+                  setShowTranslateButton(false); // 翻訳ボタンを非表示
+                  setShowJapaneseButton(true); // 日本語訳ボタンを表示
+                  setCurrentMarkdownType('trans'); // 現在のマークダウンタイプをtransに設定
+                } else if (inLLMOutput) {
+                  // LLMの出力を逐次的に追加
+                  setContent((prevContent) => prevContent + data.llm_output);
+                }
+              }
+            } catch (e) {
+              console.error('Error parsing data:', e);
+            }
+          }
+        }
+      }
+
+      // バッファに残ったデータを処理
+      if (buffer && buffer.startsWith('data:')) {
+        const dataContent = buffer.slice('data: '.length);
+        try {
+          const data = JSON.parse(dataContent);
+
+          if (data.error) {
+            throw new Error(data.error);
+          }
+
+          if (data.status) {
+            console.log('Status:', data.status);
+            setProcessingStatus(data.status);
+          }
+
+          if (data.llm_output) {
+            //console.log('LLM_OUTPUT:', data.llm_output);
+            if (data.llm_output === 'start') {
+              inLLMOutput = true;
+              setContent(''); // マークダウン内容をリセット
+            } else if (data.llm_output === 'end') {
+              inLLMOutput = false;
+              setIsAppending(false); // 逐次的な追加を終了
+              setMarkdownLoading(false); // LLM出力終了時にロード状態を解除
+              setProcessingStatus(''); // 進捗状況をリセット
+              setShowTranslateButton(false); // 翻訳ボタンを非表示
+              setShowJapaneseButton(true); // 日本語訳ボタンを表示
+              setCurrentMarkdownType('trans'); // 現在のマークダウンタイプをtransに設定
+            } else if (inLLMOutput) {
+              // LLMの出力を逐次的に追加
+              setContent((prevContent) => prevContent + data.llm_output);
+            }
+          }
+        } catch (e) {
+          console.error('Error parsing data:', e);
+        }
+      }
+    } catch (error) {
+      console.error('Error during translation:', error);
+      alert('翻訳中にエラーが発生しました: ' + error.message);
+      setMarkdownLoading(false);
+      setIsAppending(false); // エラー発生時にも追加を終了
+    }
+  };
+
+  // 日本語訳ボタンのクリックハンドラー
+  const handleShowJapanese = async () => {
+    if (!selectedDirectory || !baseFileName) {
+      alert('ディレクトリまたはファイル名が不明です');
+      return;
+    }
+
+    try {
+      setMarkdownLoading(true);
+      setProcessingStatus(''); // 進捗状況をリセット
+      setIsAppending(false); // 一括で読み込むため追加を無効化
+      setContent(''); // マークダウン内容をリセット
+
+      await fetchMarkdownContent(selectedDirectory, baseFileName, 'trans');
+      setCurrentMarkdownType('trans'); // 現在のマークダウンタイプをtransに設定
+    } catch (error) {
+      console.error('Error fetching Japanese markdown:', error);
+      alert('日本語訳の取得中にエラーが発生しました: ' + error.message);
+      setMarkdownLoading(false);
+    }
+  };
+
+  const handleShowOrigin = async () => {
+    if (!selectedDirectory || !baseFileName) {
+      alert('ディレクトリまたはファイル名が不明です');
+      return;
+    }
+
+    try {
+      setMarkdownLoading(true);
+      setProcessingStatus('');
+      setIsAppending(false);
+      setContent('');
+
+      await fetchMarkdownContent(selectedDirectory, baseFileName, 'origin');
+      setCurrentMarkdownType('origin');
+    } catch (error) {
+      console.error('Error fetching origin markdown:', error);
+      alert('原文の取得中にエラーが発生しました: ' + error.message);
+      setMarkdownLoading(false);
+    }
+  };
+
+  const fetchMarkdownContent = async (
+    dirName,
+    baseFileName,
+    type,
+    retryCount = 0
+  ) => {
+    try {
+      const mdFileName =
+        type === 'origin'
+          ? `${baseFileName}_origin.md`
+          : `${baseFileName}_trans.md`;
+      const markdownResponse = await fetchWithTimeout(
+        `http://127.0.0.1:5601/contents/${dirName}/${mdFileName}`,
+        {
+          method: 'GET',
+          mode: 'cors',
+        }
+      );
+
+      if (!markdownResponse || !markdownResponse.ok) {
+        throw new Error('マークダウンの取得に失敗しました');
+      }
+
+      let markdownContent = await markdownResponse.text();
+      console.log('Fetched markdown content.');
+
+      // マークダウンテキスト内の画像パスを置換
+      markdownContent = markdownContent
+        .replace(
+          /!\[Local Image\]\(picture-(\d+)\.png\)/g,
+          `![Local Image](http://127.0.0.1:5601/contents/${dirName}/picture-$1.png)`
+        )
+        .replace(
+          /!\[Local Image\]\(table-(\d+)\.png\)/g,
+          `![Local Image](http://127.0.0.1:5601/contents/${dirName}/table-$1.png)`
+        );
+
+      setContent(markdownContent);
+      console.log('Set markdown content to state.');
+
+      // Update buttons based on type
+      if (type === 'origin') {
+        setCurrentMarkdownType('origin');
+      } else {
+        setCurrentMarkdownType('trans');
+      }
+    } catch (error) {
+      if (retryCount < 5) {
+        console.log('Retrying to fetch markdown...', retryCount);
+        setTimeout(
+          () => fetchMarkdownContent(dirName, baseFileName, type, retryCount + 1),
+          1000
+        );
+      } else {
+        console.error('Error fetching markdown:', error);
+        setMarkdownError('マークダウンの取得に失敗しました');
+      }
+    } finally {
+      setMarkdownLoading(false);
+    }
   };
 
   return (
@@ -807,7 +1066,37 @@ const App = () => {
           {/* 中央ペイン（マークダウンエディタ/プレビュー） */}
           <div className="flex flex-col relative">
             <Tabs defaultValue="preview" className="h-full pb-3">
-              <div className="flex justify-end mb-2">
+              <div className="flex justify-between items-center mb-2">
+                {/* 左側に「原文」ボタンと「+翻訳」ボタンを追加 */}
+                <div className="flex space-x-2">
+                  <Button
+                    variant={currentMarkdownType === 'origin' ? 'outline' : 'primary'}
+                    size="sm"
+                    onClick={handleShowOrigin}
+                  >
+                    原文
+                  </Button>
+                  {showTranslateButton && (
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={handleTranslate}
+                    >
+                      +翻訳
+                    </Button>
+                  )}
+                  {showJapaneseButton && (
+                    <Button
+                      variant={currentMarkdownType === 'trans' ? 'outline' : 'primary'}
+                      size="sm"
+                      onClick={handleShowJapanese}
+                    >
+                      日本語訳
+                    </Button>
+                  )}
+                </div>
+
+                {/* 右側にタブを配置 */}
                 <TabsList>
                   <TabsTrigger value="edit">編集モード</TabsTrigger>
                   <TabsTrigger value="preview">プレビューモード</TabsTrigger>
