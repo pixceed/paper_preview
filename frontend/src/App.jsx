@@ -18,7 +18,7 @@ import {
   ZoomOut,
   Loader2,
   Menu,
-  MoreHorizontal, // 追加: 「・・・」アイコン
+  MoreHorizontal,
 } from 'lucide-react';
 
 import ReactMarkdown from 'react-markdown';
@@ -84,7 +84,7 @@ const Sidebar = ({
   directories,
   onSelectDirectory,
   selectedDirectory,
-  onRequestDeleteDirectory, // 変更: 削除リクエスト関数
+  onRequestDeleteDirectory,
 }) => {
   const [popupDir, setPopupDir] = useState(null); // ポップアップを表示するディレクトリ
   const [popupPosition, setPopupPosition] = useState({ top: 0, left: 0 }); // ポップアップの位置を動的に管理
@@ -183,7 +183,7 @@ const Sidebar = ({
         >
           <button
             onClick={() => {
-              onRequestDeleteDirectory(popupDir); // 変更: 直接削除せず確認をリクエスト
+              onRequestDeleteDirectory(popupDir);
               setPopupDir(null);
             }}
             className="w-full px-4 py-2 text-red-500 hover:bg-gray-600 hover:rounded text-left"
@@ -220,7 +220,7 @@ const Header = ({ onPdfSelect, onMenuClick, sidebarOpen }) => {
       )}
       <div className="px-4 py-3 flex-1">
         <div className="flex items-center justify-between">
-          <h1 className="text-2xl font-bold text-primary">Smart Scholar Reader</h1>
+          <h1 className="text-2xl font-bold text-primary">Smart Scholar Survey</h1>
           <Tabs defaultValue="file" className="w-[600px]">
             <div className="flex items-center gap-4">
               <TabsList className="h-9 p-1 bg-muted">
@@ -369,12 +369,19 @@ const App = () => {
   // baseFileNameを保持
   const [baseFileName, setBaseFileName] = useState('');
 
-  // **新規追加: 編集モードと変更状態を追跡**
+  // 編集モードと変更状態を追跡
   const [activeTab, setActiveTab] = useState('preview'); // 'edit' または 'preview'
   const [isModified, setIsModified] = useState(false); // テキストが変更されたか
 
-  // **新規追加: 確認ダイアログ用の状態**
+  // 確認ダイアログ用の状態
   const [confirmDeleteDir, setConfirmDeleteDir] = useState(null); // 削除確認対象のディレクトリ
+
+  // エージェントの状態を保持
+  const [agentState, setAgentState] = useState(null);
+
+  const [chatLoading, setChatLoading] = useState(false); // チャットのローディング状態
+
+  const [isAssistantTyping, setIsAssistantTyping] = useState(false); // アシスタントが入力中かどうか
 
   // コンテナの幅を更新する関数
   const updateContainerWidth = () => {
@@ -429,20 +436,123 @@ const App = () => {
     fetchDirectories();
   }, []);
 
-  const handleSend = () => {
+  // チャットのリセットハンドラー
+  const handleChatReset = async () => {
+    if (!selectedDirectory) {
+      alert('ディレクトリが選択されていません');
+      return;
+    }
+    await fetchAgentState(selectedDirectory);
+    setChat([]);
+    console.log('Chat has been reset.');
+  };
+
+  // fetchAgentState 関数を定義
+  const fetchAgentState = async (dirName) => {
+    try {
+      const response = await fetch(
+        `http://127.0.0.1:5601/initialize_state?input_dir=${dirName}`,
+        {
+          method: 'GET',
+          mode: 'cors',
+        }
+      );
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'エージェントの初期化に失敗しました');
+      }
+
+      const data = await response.json();
+      setAgentState(data);
+
+      // チャットをリセット（初期化）
+      setChat([]);
+
+      // エージェントの最初のメッセージを除外
+      // 必要に応じて初期メッセージを追加する場合はここで処理
+    } catch (error) {
+      console.error('Error initializing agent state:', error);
+      alert('エージェントの初期化中にエラーが発生しました: ' + error.message);
+    }
+  };
+
+  const handleSend = async () => {
     if (message.trim() || pendingImages.length > 0) {
-      const newMessages = [];
+      if (!agentState) {
+        alert('エージェントが初期化されていません');
+        return;
+      }
+
+      // ユーザーメッセージを準備
+      const userMessages = [];
+
       if (message.trim()) {
-        newMessages.push({ role: 'user', type: 'text', content: message });
+        userMessages.push({ role: 'user', content: message });
       }
-      if (pendingImages.length > 0) {
-        pendingImages.forEach((image) => {
-          newMessages.push({ role: 'user', type: 'image', content: image });
+
+      // ユーザーメッセージをチャットに追加
+      setChat((prevChat) => [
+        ...prevChat,
+        { role: 'user', type: 'text', content: message },
+      ]);
+
+      setMessage(''); // 入力欄をクリア
+
+      // エージェント状態を更新
+      const newAgentState = { ...agentState };
+      userMessages.forEach((msg) => {
+        newAgentState.messages.push(msg);
+      });
+
+      try {
+        setChatLoading(true); // ローディング状態を開始
+        setIsAssistantTyping(true); // アシスタントが入力中
+
+        const response = await fetch('http://127.0.0.1:5601/scholar_agent', {
+          method: 'POST',
+          mode: 'cors',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            state: newAgentState,
+            user_input: message,
+          }),
         });
-        setPendingImages([]);
+
+        if (!response.ok) {
+          const errorData = await response.json();
+          throw new Error(errorData.error || 'エージェントからの応答取得に失敗しました');
+        }
+
+        const data = await response.json();
+
+        // エージェント状態を更新
+        setAgentState(data.state);
+
+        // 新しいアシスタントのメッセージを取得
+        const assistantMessage = data.state.messages[data.state.messages.length - 1];
+
+        // アシスタントのメッセージをチャットに追加
+        setChat((prevChat) => [
+          ...prevChat,
+          {
+            role: assistantMessage.role,
+            type: 'text',
+            content: assistantMessage.content,
+          },
+        ]);
+
+        setPendingImages([]); // 画像をクリア（必要に応じて）
+
+      } catch (error) {
+        console.error('Error during chat:', error);
+        alert('チャット中にエラーが発生しました: ' + error.message);
+      } finally {
+        setChatLoading(false); // ローディング状態を終了
+        setIsAssistantTyping(false); // アシスタントの入力終了
       }
-      setChat([...chat, ...newMessages]);
-      setMessage('');
     }
   };
 
@@ -494,12 +604,6 @@ const App = () => {
     console.log(`Zoomed out to scale: ${scale - 0.2}`);
   };
 
-  // チャットのリセットハンドラー
-  const handleChatReset = () => {
-    setChat([]);
-    console.log('Chat has been reset.');
-  };
-
   // contentが更新されたときにスクロール位置を制御
   useEffect(() => {
     if (previewContainerRef.current) {
@@ -531,6 +635,7 @@ const App = () => {
           setShowJapaneseButton(false);
           setCurrentMarkdownType('origin');
           setBaseFileName('');
+          setAgentState(null); // エージェント状態をリセット
 
           const url = 'http://127.0.0.1:5601/pdf2markdown';
           let options = {
@@ -692,6 +797,9 @@ const App = () => {
             setShowJapaneseButton(false);
             setShowTranslateButton(true);
           }
+
+          // エージェント状態を取得
+          await fetchAgentState(dirName);
         } catch (error) {
           console.error('Error processing PDF:', error);
           alert('処理中にエラーが発生しました: ' + error.message);
@@ -724,6 +832,7 @@ const App = () => {
         setShowJapaneseButton(false);
         setCurrentMarkdownType('origin');
         setBaseFileName('');
+        setAgentState(null); // エージェント状態をリセット
 
         const dirName = selectedDirectory;
 
@@ -799,6 +908,9 @@ const App = () => {
 
         // マークダウンの取得を開始
         await fetchMarkdownContent(dirName, baseFileName, 'origin');
+
+        // エージェント状態を取得
+        await fetchAgentState(dirName);
       } catch (error) {
         console.error('Error processing directory:', error);
         alert('処理中にエラーが発生しました: ' + error.message);
@@ -825,19 +937,21 @@ const App = () => {
     setIsAppending(false); // 新しいPDF読み込み時には追加を無効化
     setIsModified(false); // ディレクトリ変更時に編集状態をリセット
     setActiveTab('preview'); // ディレクトリ変更時にプレビューモードに切り替え
+    setAgentState(null); // エージェント状態をリセット
+    // setChat([]); // チャットをリセットする処理はfetchAgentState内で行う
   };
 
-  // **新規変更: 削除リクエストのハンドラー**
+  // 削除リクエストのハンドラー
   const handleRequestDeleteDirectory = (dirName) => {
     setConfirmDeleteDir(dirName);
   };
 
-  // **新規変更: 確認ダイアログでキャンセルをハンドル**
+  // 確認ダイアログでキャンセルをハンドル
   const handleCancelDelete = () => {
     setConfirmDeleteDir(null);
   };
 
-  // **新規変更: 確認ダイアログで削除をハンドル**
+  // 確認ダイアログで削除をハンドル
   const handleConfirmDelete = async () => {
     if (confirmDeleteDir) {
       await handleDeleteDirectory(confirmDeleteDir);
@@ -845,7 +959,7 @@ const App = () => {
     }
   };
 
-  // **既存の削除ロジック**
+  // 削除ロジック
   const handleDeleteDirectory = async (dirName) => {
     try {
       const response = await fetch('http://127.0.0.1:5601/delete_directory', {
@@ -873,6 +987,8 @@ const App = () => {
         setSelectedDirectory(null);
         setPdfToDisplay(null);
         setContent('');
+        setAgentState(null); // エージェント状態をリセット
+        setChat([]); // チャットをリセット
       }
     } catch (error) {
       console.error('Error deleting directory:', error);
@@ -1124,7 +1240,7 @@ const App = () => {
     }
   };
 
-  // **新規追加: 保存機能の実装**
+  // 保存機能の実装
   const handleSave = async () => {
     try {
       if (!selectedDirectory || !baseFileName) {
@@ -1180,7 +1296,7 @@ const App = () => {
         directories={directories}
         onSelectDirectory={handleSelectDirectory}
         selectedDirectory={selectedDirectory}
-        onRequestDeleteDirectory={handleRequestDeleteDirectory} // 変更: 削除リクエスト関数を渡す
+        onRequestDeleteDirectory={handleRequestDeleteDirectory}
       />
       <Header
         onPdfSelect={(pdf) => {
@@ -1192,6 +1308,8 @@ const App = () => {
           setIsAppending(false); // 新しいPDF読み込み時には追加を無効化
           setIsModified(false); // 新しいPDF読み込み時に編集状態をリセット
           setActiveTab('preview'); // 新しいPDF読み込み時にプレビューモードに切り替え
+          setAgentState(null); // エージェント状態をリセット
+          setChat([]); // チャットをリセット
         }}
         onMenuClick={toggleSidebar}
         sidebarOpen={sidebarOpen}
@@ -1394,7 +1512,13 @@ const App = () => {
                       }`}
                     >
                       {msg.type === 'text' ? (
-                        <div className="rounded-lg px-4 py-2 max-w-[80%] bg-primary text-primary-foreground">
+                        <div
+                          className={`rounded-lg px-4 py-2 max-w-[80%] ${
+                            msg.role === 'user'
+                              ? 'bg-blue-500 text-white'
+                              : 'bg-gray-200 text-black'
+                          }`}
+                        >
                           <div className="whitespace-pre-wrap">
                             {msg.content}
                           </div>
@@ -1408,6 +1532,13 @@ const App = () => {
                       )}
                     </div>
                   ))}
+                  {/* アシスタントのローディングスピナーを追加 */}
+                  {isAssistantTyping && (
+                    <div className="flex justify-start items-center mt-4">
+                      <Loader2 className="animate-spin mr-2 h-5 w-5 text-gray-500" />
+                      <div>回答生成中...</div>
+                    </div>
+                  )}
                 </div>
               </CardContent>
 

@@ -1,6 +1,7 @@
 import os
 import json
 import time
+import base64
 from flask import Flask, request, jsonify, send_from_directory, Response, stream_with_context
 from flask_cors import CORS
 import requests
@@ -11,6 +12,12 @@ from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage
 from langchain_community.callbacks.manager import get_openai_callback
+
+from typing import Annotated  # 型ヒント用のモジュール
+from typing_extensions import TypedDict  # 型ヒント用の拡張モジュール
+from langgraph.graph import StateGraph
+from langgraph.graph.message import add_messages
+from langchain_core.prompts import PromptTemplate
 
 from docling.datamodel.base_models import InputFormat
 from docling.datamodel.pipeline_options import (
@@ -432,6 +439,198 @@ def delete_directory():
         error_traceback = traceback.format_exc()
         print(error_traceback)
         return jsonify({'error': f'Error deleting directory: {str(e)}'}), 500
+
+@app.route('/initialize_state', methods=['GET'])
+def initialize_state():
+
+    # リクエストからinput_dirを取得（クエリパラメータとして）
+    input_dir_param = request.args.get('input_dir')
+    
+    if not input_dir_param:
+        return jsonify({"error": "input_dir パラメータが必要です。"}), 400
+
+    # セキュリティ対策: ディレクトリ名にディレクトリトラバーサルが含まれていないかチェック
+    if '..' in input_dir_param or '/' in input_dir_param or '\\' in input_dir_param:
+        return jsonify({'error': 'Invalid directory name.'}), 400
+
+    input_dir = os.path.join(CONTENT_DATA_DIR, input_dir_param)
+    
+    if not os.path.isdir(input_dir):
+        return jsonify({"error": f"指定されたディレクトリが存在しません: {input_dir_param}"}), 400
+
+    # マークダウンファイルを取得
+    md_files = [f for f in os.listdir(input_dir) if f.endswith('_origin.md')]
+    if not md_files:
+        return jsonify({"error": "ディレクトリ内に_origin.mdファイルが存在しません。"}), 400
+
+    md_path = os.path.join(input_dir, md_files[0])
+
+    with open(md_path, mode="r") as f:
+        md_text = f.read()
+
+    # 画像のパスリストを取得
+    png_files = []
+    for root, dirs, files in os.walk(input_dir):
+        for file in files:
+            if (file.startswith('table') or file.startswith('picture')) and file.endswith('.png'):
+                png_files.append(os.path.join(root, file))
+
+    # 状態の型定義
+    class State(TypedDict):
+        messages: Annotated[list, add_messages]
+
+    # グラフビルダーを作成
+    graph_builder = StateGraph(State)
+    chat_model = ChatOpenAI(model="gpt-4o-mini", temperature=1)
+
+    # チャットボット関数
+    def chatbot(state: State):
+        return {"messages": [chat_model.invoke(state["messages"])]}
+
+    graph_builder.add_node("chatbot", chatbot)
+    graph_builder.set_entry_point("chatbot")
+    agent = graph_builder.compile()
+
+    # チャットヒストリーを作成
+    state = {"messages": []}
+
+    # システムプロンプトを設定
+    system_prompt = """
+あなたは、論文解説のスペシャリストです。
+以下の論文内容を理解し、ユーザーからの質問に分かりやすく回答してください。
+"""
+    system_message = {
+        "role": "system",
+        "content": system_prompt
+    }
+    state["messages"].append(system_message)
+
+    # ユーザープロンプトを設定
+    prompt_template = PromptTemplate(
+        input_variables=["paper_content"],
+        template="""
+以下の論文内容について、教えてください。
+
+<論文内容>
+{paper_content}
+</論文内容>
+""",
+    )
+
+    user_prompt = prompt_template.invoke({
+        "paper_content": md_text
+    })
+    user_prompt_text = user_prompt.text
+
+    # 画像の情報を追加
+    image_info = "\n\n<図の詳細>"
+    for i, png_file in enumerate(png_files):
+        png_file_name = os.path.basename(png_file)
+        image_info += f"\n{i+1}つ目の画像は、{png_file_name}です。"
+    image_info += "\n</図の詳細>"
+
+    user_prompt_text += image_info
+
+    # ユーザーメッセージを作成
+    user_message = {
+        "role": "user",
+        "content": user_prompt_text
+    }
+    state["messages"].append(user_message)
+
+    # AIからの最初の応答を設定
+    assistant_prompt = """
+論文内容を理解しました。
+質問をどうぞ。
+"""
+    state["messages"].append(
+        {"role": "assistant", "content": assistant_prompt},
+    )
+
+    # stateをJSON形式で返す
+    return jsonify(state)
+
+# 状態の型定義
+class State(TypedDict):
+    messages: Annotated[list, add_messages]
+
+
+def initialize_agent():
+    """
+    指定されたディレクトリから必要なファイルを読み込み、
+    エージェントと初期状態（state）を初期化します。
+    """
+
+    # グラフビルダーを作成
+    graph_builder = StateGraph(State)
+    chat_model = ChatOpenAI(model="gpt-4o-mini", temperature=1)
+
+    # チャットボット関数
+    def chatbot(state: State):
+        return {"messages": [chat_model.invoke(state["messages"])]}
+
+    graph_builder.add_node("chatbot", chatbot)
+    graph_builder.set_entry_point("chatbot")
+    agent = graph_builder.compile()
+
+    return agent
+
+
+@app.route('/scholar_agent', methods=['POST'])
+def scholar_agent():
+    """
+    エージェントを作成し、リクエストからメッセージの履歴とユーザーからの質問を受け取って、
+    エージェントで質問に回答し、生成された回答と更新されたメッセージの履歴をレスポンスで返します。
+    """
+    data = request.get_json()
+
+    if not data:
+        return jsonify({"error": "JSONペイロードが必要です。"}), 400
+
+    state = data.get('state')
+    user_input = data.get('user_input')
+
+    if not state:
+        return jsonify({"error": "state が必要です。"}), 400
+
+    if not user_input:
+        return jsonify({"error": "user_input が必要です。"}), 400
+
+    if not isinstance(state, dict) or 'messages' not in state:
+        return jsonify({"error": "state は有効な形式でなければなりません。"}), 400
+
+    try:
+        # エージェントと初期状態を初期化
+        agent = initialize_agent()
+
+        # ユーザーの質問を状態に追加
+        user_message = {
+            "role": "user",
+            "content": user_input
+        }
+        state["messages"].append(user_message)
+
+        # ユーザー入力に基づいてチャットボットが応答を生成
+        with get_openai_callback() as cb:
+            # agent.streamを使用して応答を取得
+            for event in agent.stream(state):
+                for value in event.values():
+                    response = value["messages"][-1].content
+                    state["messages"].append({"role": "assistant", "content": response})
+        
+        # レスポンスの生成
+        response_data = {
+            "response": response,
+            "state": state
+        }
+
+        return jsonify(response_data)
+    
+    except FileNotFoundError as e:
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        return jsonify({"error": f"内部エラーが発生しました: {str(e)}"}), 500
+
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5601, debug=True)
