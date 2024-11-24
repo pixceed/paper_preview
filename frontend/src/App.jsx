@@ -18,6 +18,7 @@ import {
   ZoomOut,
   Loader2,
   Menu,
+  MoreHorizontal, // 追加: 「・・・」アイコン
 } from 'lucide-react';
 
 import ReactMarkdown from 'react-markdown';
@@ -54,6 +55,28 @@ const fetchWithTimeout = (url, options, timeout = 60000) => {
   });
 };
 
+// 確認ダイアログコンポーネントの定義
+const ConfirmationDialog = ({ isOpen, message, onCancel, onConfirm }) => {
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 flex items-center justify-center bg-black bg-opacity-50 z-50">
+      <div className="bg-white rounded-lg shadow-lg p-6 w-80">
+        <h2 className="text-lg font-semibold mb-4">確認</h2>
+        <p className="mb-6">{message}</p>
+        <div className="flex justify-end gap-4">
+          <Button variant="secondary" onClick={onCancel}>
+            キャンセル
+          </Button>
+          <Button variant="danger" onClick={onConfirm}>
+            削除する
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 // サイドバーコンポーネントの定義
 const Sidebar = ({
   isOpen,
@@ -61,7 +84,42 @@ const Sidebar = ({
   directories,
   onSelectDirectory,
   selectedDirectory,
+  onRequestDeleteDirectory, // 変更: 削除リクエスト関数
 }) => {
+  const [popupDir, setPopupDir] = useState(null); // ポップアップを表示するディレクトリ
+  const [popupPosition, setPopupPosition] = useState({ top: 0, left: 0 }); // ポップアップの位置を動的に管理
+  const popupRef = useRef(null); // ポップアップの参照
+
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (
+        popupRef.current &&
+        !popupRef.current.contains(event.target)
+      ) {
+        setPopupDir(null);
+      }
+    };
+
+    if (popupDir) {
+      document.addEventListener('mousedown', handleClickOutside);
+    } else {
+      document.removeEventListener('mousedown', handleClickOutside);
+    }
+
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [popupDir]);
+
+  const handleMoreButtonClick = (event, dirName) => {
+    const buttonRect = event.currentTarget.getBoundingClientRect();
+    setPopupPosition({
+      top: buttonRect.bottom + window.scrollY, // ボタンの下端
+      left: buttonRect.left + window.scrollX, // ボタンの左端
+    });
+    setPopupDir(dirName); // 表示するディレクトリを設定
+  };
+
   return (
     <div
       className={`fixed top-0 left-0 h-full bg-gray-800 text-white transform ${
@@ -79,24 +137,61 @@ const Sidebar = ({
           <p>ディレクトリがありません</p>
         ) : (
           directories.map((dir) => (
-            <button
-              key={dir.dir_name}
-              onClick={() => {
-                if (dir.dir_name !== selectedDirectory) {
-                  onSelectDirectory(dir.dir_name);
-                }
-              }}
-              className={`w-full text-left px-2 py-1 rounded ${
-                dir.dir_name === selectedDirectory
-                  ? 'bg-gray-600'
-                  : 'hover:bg-gray-700'
-              }`}
-            >
-              {dir.display_name}
-            </button>
+            <div key={dir.dir_name} className="flex items-center justify-between relative">
+
+              <div
+                className={`flex items-center justify-between flex-1 text-left px-2 py-1 rounded ${
+                  dir.dir_name === selectedDirectory
+                    ? 'bg-gray-600'
+                    : 'hover:bg-gray-700'
+                }`}
+              >
+                <button
+                  key={dir.dir_name}
+                  onClick={() => {
+                    if (dir.dir_name !== selectedDirectory) {
+                      onSelectDirectory(dir.dir_name);
+                    }
+                  }}
+
+                >
+                  {dir.display_name}
+                </button>
+                <button
+                  onClick={(event) => handleMoreButtonClick(event, dir.dir_name)}
+                  className="focus:outline-none p-1 hover:bg-gray-700 rounded"
+                >
+                  <MoreHorizontal className="h-4 w-4" />
+                </button>
+              </div>
+
+            </div>
           ))
         )}
       </div>
+
+      {/* ポップアップ */}
+      {popupDir && (
+        <div
+          ref={popupRef}
+          className="absolute bg-gray-700 rounded shadow-lg w-24"
+          style={{
+            top: popupPosition.top,
+            left: popupPosition.left,
+            zIndex: 1100,
+          }}
+        >
+          <button
+            onClick={() => {
+              onRequestDeleteDirectory(popupDir); // 変更: 直接削除せず確認をリクエスト
+              setPopupDir(null);
+            }}
+            className="w-full px-4 py-2 text-red-500 hover:bg-gray-600 hover:rounded text-left"
+          >
+            削除
+          </button>
+        </div>
+      )}
     </div>
   );
 };
@@ -278,6 +373,9 @@ const App = () => {
   const [activeTab, setActiveTab] = useState('preview'); // 'edit' または 'preview'
   const [isModified, setIsModified] = useState(false); // テキストが変更されたか
 
+  // **新規追加: 確認ダイアログ用の状態**
+  const [confirmDeleteDir, setConfirmDeleteDir] = useState(null); // 削除確認対象のディレクトリ
+
   // コンテナの幅を更新する関数
   const updateContainerWidth = () => {
     if (pdfContainerRef.current) {
@@ -448,7 +546,7 @@ const App = () => {
             options.headers = {
               'Content-Type': 'application/json',
             };
-            options.body = JSON.stringify({ url: pdfToDisplay.url });
+            options.body = JSON.stringify({ url: pdfUrl });
           }
 
           console.log('Starting PDF processing...');
@@ -727,6 +825,59 @@ const App = () => {
     setIsAppending(false); // 新しいPDF読み込み時には追加を無効化
     setIsModified(false); // ディレクトリ変更時に編集状態をリセット
     setActiveTab('preview'); // ディレクトリ変更時にプレビューモードに切り替え
+  };
+
+  // **新規変更: 削除リクエストのハンドラー**
+  const handleRequestDeleteDirectory = (dirName) => {
+    setConfirmDeleteDir(dirName);
+  };
+
+  // **新規変更: 確認ダイアログでキャンセルをハンドル**
+  const handleCancelDelete = () => {
+    setConfirmDeleteDir(null);
+  };
+
+  // **新規変更: 確認ダイアログで削除をハンドル**
+  const handleConfirmDelete = async () => {
+    if (confirmDeleteDir) {
+      await handleDeleteDirectory(confirmDeleteDir);
+      setConfirmDeleteDir(null);
+    }
+  };
+
+  // **既存の削除ロジック**
+  const handleDeleteDirectory = async (dirName) => {
+    try {
+      const response = await fetch('http://127.0.0.1:5601/delete_directory', {
+        method: 'POST',
+        mode: 'cors',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ dir_name: dirName }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'ディレクトリの削除に失敗しました');
+      }
+
+      const data = await response.json();
+      // alert(data.message || 'ディレクトリを削除しました');
+
+      // ディレクトリリストを再取得
+      await fetchDirectories();
+
+      // もし削除したディレクトリが選択されていたらリセット
+      if (selectedDirectory === dirName) {
+        setSelectedDirectory(null);
+        setPdfToDisplay(null);
+        setContent('');
+      }
+    } catch (error) {
+      console.error('Error deleting directory:', error);
+      alert('ディレクトリの削除中にエラーが発生しました: ' + error.message);
+    }
   };
 
   // +翻訳ボタンのクリックハンドラー
@@ -1029,6 +1180,7 @@ const App = () => {
         directories={directories}
         onSelectDirectory={handleSelectDirectory}
         selectedDirectory={selectedDirectory}
+        onRequestDeleteDirectory={handleRequestDeleteDirectory} // 変更: 削除リクエスト関数を渡す
       />
       <Header
         onPdfSelect={(pdf) => {
@@ -1320,6 +1472,14 @@ const App = () => {
           </div>
         </Split>
       </main>
+
+      {/* 確認ダイアログの追加 */}
+      <ConfirmationDialog
+        isOpen={confirmDeleteDir !== null}
+        message={`本当に「${confirmDeleteDir}」を削除しますか？`}
+        onCancel={handleCancelDelete}
+        onConfirm={handleConfirmDelete}
+      />
     </div>
   );
 };

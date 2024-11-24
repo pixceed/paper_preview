@@ -342,6 +342,7 @@ def trans_markdown():
 
     return Response(generate(), mimetype='text/event-stream')
 
+
 # 追加: 編集モードでマークダウンを保存するエンドポイント
 @app.route('/save_markdown', methods=['POST'])
 def save_markdown():
@@ -393,6 +394,44 @@ def save_markdown():
         error_traceback = traceback.format_exc()
         print(error_traceback)
         return jsonify({'error': f'Error saving file: {str(e)}'}), 500
+
+# 追加: ディレクトリを削除するエンドポイント
+@app.route('/delete_directory', methods=['POST'])
+def delete_directory():
+    """
+    クライアントから送信されたディレクトリ名を削除するエンドポイント。
+    リクエストボディ:
+    {
+        "dir_name": "ディレクトリ名"
+    }
+    """
+    try:
+        data = request.get_json()
+        dir_name = data.get('dir_name')
+
+        # 必要なフィールドが存在するか確認
+        if not dir_name:
+            return jsonify({'error': 'dir_name is required.'}), 400
+
+        # セキュリティ対策: ディレクトリ名にディレクトリトラバーサルが含まれていないかチェック
+        if '..' in dir_name or '/' in dir_name or '\\' in dir_name:
+            return jsonify({'error': 'Invalid directory name.'}), 400
+
+        # 対象ディレクトリのパスを構築
+        target_dir = os.path.join(CONTENT_DATA_DIR, dir_name)
+        if not os.path.isdir(target_dir):
+            return jsonify({'error': 'Directory not found.'}), 404
+
+        # ディレクトリとその内容を削除
+        import shutil
+        shutil.rmtree(target_dir)
+
+        return jsonify({'message': f'Directory "{dir_name}" has been deleted successfully.'}), 200
+
+    except Exception as e:
+        error_traceback = traceback.format_exc()
+        print(error_traceback)
+        return jsonify({'error': f'Error deleting directory: {str(e)}'}), 500
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5601, debug=True)
