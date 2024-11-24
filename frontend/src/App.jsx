@@ -274,6 +274,10 @@ const App = () => {
   // baseFileNameを保持
   const [baseFileName, setBaseFileName] = useState('');
 
+  // **新規追加: 編集モードと変更状態を追跡**
+  const [activeTab, setActiveTab] = useState('preview'); // 'edit' または 'preview'
+  const [isModified, setIsModified] = useState(false); // テキストが変更されたか
+
   // コンテナの幅を更新する関数
   const updateContainerWidth = () => {
     if (pdfContainerRef.current) {
@@ -720,8 +724,9 @@ const App = () => {
     setContent(''); // マークダウン内容をリセット
     setMarkdownError('');
     setMarkdownLoading(true);
-    setIsAppending(false);
-    console.log('Selected directory:', dirName);
+    setIsAppending(false); // 新しいPDF読み込み時には追加を無効化
+    setIsModified(false); // ディレクトリ変更時に編集状態をリセット
+    setActiveTab('preview'); // ディレクトリ変更時にプレビューモードに切り替え
   };
 
   // +翻訳ボタンのクリックハンドラー
@@ -802,6 +807,7 @@ const App = () => {
                 } else if (inLLMOutput) {
                   // LLMの出力を逐次的に追加
                   setContent((prevContent) => prevContent + data.llm_output);
+                  setIsModified(true); // 編集内容が変更されたことを記録
                 }
               }
             } catch (e) {
@@ -842,6 +848,7 @@ const App = () => {
             } else if (inLLMOutput) {
               // LLMの出力を逐次的に追加
               setContent((prevContent) => prevContent + data.llm_output);
+              setIsModified(true); // 編集内容が変更されたことを記録
             }
           }
         } catch (e) {
@@ -871,6 +878,8 @@ const App = () => {
 
       await fetchMarkdownContent(selectedDirectory, baseFileName, 'trans');
       setCurrentMarkdownType('trans'); // 現在のマークダウンタイプをtransに設定
+      setIsModified(false); // 日本語訳を表示する際は変更されていないとみなす
+      setActiveTab('preview'); // 日本語訳を表示後にプレビューモードに切り替え
     } catch (error) {
       console.error('Error fetching Japanese markdown:', error);
       alert('日本語訳の取得中にエラーが発生しました: ' + error.message);
@@ -891,7 +900,9 @@ const App = () => {
       setContent('');
 
       await fetchMarkdownContent(selectedDirectory, baseFileName, 'origin');
-      setCurrentMarkdownType('origin');
+      setCurrentMarkdownType('origin'); // 現在のマークダウンタイプをoriginに設定
+      setIsModified(false); // 原文を表示する際は変更されていないとみなす
+      setActiveTab('preview'); // 原文を表示後にプレビューモードに切り替え
     } catch (error) {
       console.error('Error fetching origin markdown:', error);
       alert('原文の取得中にエラーが発生しました: ' + error.message);
@@ -938,6 +949,7 @@ const App = () => {
 
       setContent(markdownContent);
       console.log('Set markdown content to state.');
+      setIsModified(false); // コンテンツを取得した時点で変更なし
 
       // Update buttons based on type
       if (type === 'origin') {
@@ -958,6 +970,49 @@ const App = () => {
       }
     } finally {
       setMarkdownLoading(false);
+    }
+  };
+
+  // **新規追加: 保存機能の実装**
+  const handleSave = async () => {
+    try {
+      if (!selectedDirectory || !baseFileName) {
+        alert('ディレクトリまたはファイル名が不明です');
+        return;
+      }
+
+      const type = currentMarkdownType; // 'origin' または 'trans'
+      const mdFileName =
+        type === 'origin'
+          ? `${baseFileName}_origin.md`
+          : `${baseFileName}_trans.md`;
+
+      const url = 'http://127.0.0.1:5601/save_markdown'; // 保存用APIエンドポイント
+      const options = {
+        method: 'POST', // または 'PUT'、APIに合わせて変更
+        mode: 'cors',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          dir_name: selectedDirectory,
+          file_name: mdFileName,
+          content: content,
+        }),
+      };
+
+      const response = await fetch(url, options);
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || '保存に失敗しました');
+      }
+
+      alert('保存が完了しました');
+      setIsModified(false); // 保存後は変更状態をリセット
+    } catch (error) {
+      console.error('Error saving markdown:', error);
+      alert('保存中にエラーが発生しました: ' + error.message);
     }
   };
 
@@ -983,6 +1038,8 @@ const App = () => {
           setMarkdownError('');
           setMarkdownLoading(true);
           setIsAppending(false); // 新しいPDF読み込み時には追加を無効化
+          setIsModified(false); // 新しいPDF読み込み時に編集状態をリセット
+          setActiveTab('preview'); // 新しいPDF読み込み時にプレビューモードに切り替え
         }}
         onMenuClick={toggleSidebar}
         sidebarOpen={sidebarOpen}
@@ -1065,7 +1122,11 @@ const App = () => {
 
           {/* 中央ペイン（マークダウンエディタ/プレビュー） */}
           <div className="flex flex-col relative">
-            <Tabs defaultValue="preview" className="h-full pb-3">
+            <Tabs
+              value={activeTab}
+              onValueChange={setActiveTab}
+              className="h-full pb-3"
+            >
               <div className="flex justify-between items-center mb-2">
                 {/* 左側に「原文」ボタンと「+翻訳」ボタンを追加 */}
                 <div className="flex space-x-2">
@@ -1096,11 +1157,23 @@ const App = () => {
                   )}
                 </div>
 
-                {/* 右側にタブを配置 */}
-                <TabsList>
-                  <TabsTrigger value="edit">編集モード</TabsTrigger>
-                  <TabsTrigger value="preview">プレビューモード</TabsTrigger>
-                </TabsList>
+                {/* 右側に「保存する」ボタンとタブを配置 */}
+                <div className="flex items-center">
+                  {activeTab === 'edit' && isModified && (
+                    <Button
+                      variant="primary"
+                      size="sm"
+                      onClick={handleSave}
+                      className="mr-2"
+                    >
+                      保存する
+                    </Button>
+                  )}
+                  <TabsList>
+                    <TabsTrigger value="edit">編集モード</TabsTrigger>
+                    <TabsTrigger value="preview">プレビューモード</TabsTrigger>
+                  </TabsList>
+                </div>
               </div>
 
               <>
@@ -1110,7 +1183,10 @@ const App = () => {
                 >
                   <Textarea
                     value={content}
-                    onChange={(e) => setContent(e.target.value)}
+                    onChange={(e) => {
+                      setContent(e.target.value);
+                      setIsModified(true); // テキストが変更されたことを記録
+                    }}
                     className="bg-white h-full resize-none font-mono"
                     placeholder="マークダウンを入力してください..."
                   />

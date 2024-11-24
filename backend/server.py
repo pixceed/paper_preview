@@ -221,14 +221,14 @@ def extract_text_from_pdf(pdf_stream, file_name):
         chat_model = ChatOpenAI(model="gpt-4o-mini", temperature=0, streaming=True)
         system_prompt = SystemMessage(
             content=\
-    """
-    与えられたマークダウン文章に以下の処理を行い、追記後のマークダウン文章を出力してください。
+"""
+与えられたマークダウン文章に以下の処理を行い、追記後のマークダウン文章を出力してください。
 
-    ・文章中における図の部分に、`![Local Image](picture-$.png)\n`($は図番号)を追記してください。
-    ・文章中における表の部分に、`![Local Image](table-$.png)\n`($は表番号)を追記してください。
+・文章中における図の部分に、`![Local Image](picture-$.png)\n`($は図番号)を追記してください。
+・文章中における表の部分に、`![Local Image](table-$.png)\n`($は表番号)を追記してください。
 
-    出力は、必ずマークダウン文章のみで、余計な文章は含めないでください。
-    """
+出力は、必ずマークダウン文章のみで、余計な文章は含めないでください。
+"""
         )
         image_message = HumanMessage(content=md_text)
         messages = [system_prompt, image_message]
@@ -259,6 +259,7 @@ def extract_text_from_pdf(pdf_stream, file_name):
 
     # 保存先のディレクトリ名を返す
     yield json.dumps({"dir_name": dir_name, "base_file_name": base_name})
+
 
 # 追加: マークダウンを日本語に翻訳するエンドポイント
 @app.route('/trans_markdown', methods=['POST'])
@@ -302,13 +303,13 @@ def trans_markdown():
                 chat_model = ChatOpenAI(model="gpt-4o-mini", temperature=0, streaming=True)
                 system_prompt = SystemMessage(
                     content=\
-    """
-    以下のマークダウン文書を日本語に翻訳してください。
-    コードブロックやマークダウンの書式はそのままにしてください。
-    見出し部分は、翻訳せず原文そのままとしてください。
+"""
+以下のマークダウン文書を日本語に翻訳してください。
+コードブロックやマークダウンの書式はそのままにしてください。
+見出し部分は、翻訳せず原文そのままとしてください。
 
-    出力は、必ずマークダウン文章のみで、余計な文章は含めないでください。
-    """
+出力は、必ずマークダウン文章のみで、余計な文章は含めないでください。
+"""
                 )
                 translate_message = HumanMessage(content=md_text)
                 messages = [system_prompt, translate_message]
@@ -340,6 +341,58 @@ def trans_markdown():
             return
 
     return Response(generate(), mimetype='text/event-stream')
+
+# 追加: 編集モードでマークダウンを保存するエンドポイント
+@app.route('/save_markdown', methods=['POST'])
+def save_markdown():
+    """
+    クライアントから送信されたマークダウン内容を指定されたディレクトリとファイルに保存するエンドポイント。
+    リクエストボディ:
+    {
+        "dir_name": "ディレクトリ名",
+        "file_name": "ファイル名.md",
+        "content": "マークダウン内容"
+    }
+    """
+    try:
+        data = request.get_json()
+        dir_name = data.get('dir_name')
+        file_name = data.get('file_name')
+        content = data.get('content')
+
+        # 必要なフィールドがすべて存在するか確認
+        if not dir_name or not file_name or content is None:
+            return jsonify({'error': 'dir_name, file_name, and content are required.'}), 400
+
+        # セキュリティ対策: ディレクトリ名とファイル名にディレクトリトラバーサルが含まれていないかチェック
+        if '..' in dir_name or '/' in dir_name or '\\' in dir_name:
+            return jsonify({'error': 'Invalid directory name.'}), 400
+
+        if '..' in file_name or '/' in file_name or '\\' in file_name:
+            return jsonify({'error': 'Invalid file name.'}), 400
+
+        # ファイル名が .md で終わることを確認
+        if not file_name.lower().endswith('.md'):
+            return jsonify({'error': 'Invalid file name. Must end with .md'}), 400
+
+        # 対象ディレクトリのパスを構築
+        target_dir = os.path.join(CONTENT_DATA_DIR, dir_name)
+        if not os.path.isdir(target_dir):
+            return jsonify({'error': 'Directory not found.'}), 404
+
+        # 対象ファイルのパスを構築
+        target_file_path = os.path.join(target_dir, file_name)
+
+        # ファイルを保存
+        with open(target_file_path, 'w', encoding='utf-8') as f:
+            f.write(content)
+
+        return jsonify({'message': 'File saved successfully.'}), 200
+
+    except Exception as e:
+        error_traceback = traceback.format_exc()
+        print(error_traceback)
+        return jsonify({'error': f'Error saving file: {str(e)}'}), 500
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5601, debug=True)
