@@ -220,7 +220,10 @@ const Header = ({ onPdfSelect, onMenuClick, sidebarOpen }) => {
       )}
       <div className="px-4 py-3 flex-1">
         <div className="flex items-center justify-between">
-          <h1 className="text-2xl font-bold text-primary">Smart Scholar Survey</h1>
+          <div className='flex'>
+            <img src="binoculars_logo.png" alt="Synapse Logo" className="h-8 w-8 mr-2 mt-0.5" />
+            <h1 className="text-2xl font-bold text-primary">Survey Copilot</h1>
+          </div>
           <Tabs defaultValue="file" className="w-[600px]">
             <div className="flex items-center gap-4">
               <TabsList className="h-9 p-1 bg-muted">
