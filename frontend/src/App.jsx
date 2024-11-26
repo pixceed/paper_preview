@@ -221,7 +221,7 @@ const Header = ({ onPdfSelect, onMenuClick, sidebarOpen }) => {
       <div className="px-4 py-3 flex-1">
         <div className="flex items-center justify-between">
           <div className='flex'>
-            <img src="binoculars_logo.png" alt="Synapse Logo" className="h-8 w-8 mr-2 mt-0.5" />
+            <img src="binoculars_logo2.png" alt="Synapse Logo" className="h-8 w-8 mr-2 mt-0.5" />
             <h1 className="text-2xl font-bold text-primary">Survey Copilot</h1>
           </div>
           <Tabs defaultValue="file" className="w-[600px]">
@@ -400,7 +400,7 @@ const App = () => {
   const fetchDirectories = async () => {
     try {
       const response = await fetchWithTimeout(
-        'http://127.0.0.1:5601/list_contents',
+        `http://${import.meta.env.VITE_APP_IP}:5601/list_contents`,
         {
           method: 'GET',
           mode: 'cors',
@@ -454,7 +454,7 @@ const App = () => {
   const fetchAgentState = async (dirName) => {
     try {
       const response = await fetch(
-        `http://127.0.0.1:5601/initialize_state?input_dir=${dirName}`,
+        `http://${import.meta.env.VITE_APP_IP}:5601/initialize_state?input_dir=${dirName}`,
         {
           method: 'GET',
           mode: 'cors',
@@ -512,7 +512,7 @@ const App = () => {
         setChatLoading(true); // ローディング状態を開始
         setIsAssistantTyping(true); // アシスタントが入力中
 
-        const response = await fetch('http://127.0.0.1:5601/scholar_agent', {
+        const response = await fetch(`http://${import.meta.env.VITE_APP_IP}:5601/scholar_agent`, {
           method: 'POST',
           mode: 'cors',
           headers: {
@@ -640,7 +640,7 @@ const App = () => {
           setBaseFileName('');
           setAgentState(null); // エージェント状態をリセット
 
-          const url = 'http://127.0.0.1:5601/pdf2markdown';
+          const url = `http://${import.meta.env.VITE_APP_IP}:5601/pdf2markdown`;
           let options = {
             method: 'POST',
             mode: 'cors',
@@ -743,7 +743,7 @@ const App = () => {
 
           // PDFファイル一覧を取得
           const pdfFileResponse = await fetchWithTimeout(
-            `http://127.0.0.1:5601/list_files/${dirName}`,
+            `http://${import.meta.env.VITE_APP_IP}:5601/list_files/${dirName}`,
             {
               method: 'GET',
               mode: 'cors',
@@ -772,7 +772,7 @@ const App = () => {
           // PDFのURLを設定
           const newPdfToDisplay = {
             type: 'saved',
-            url: `http://127.0.0.1:5601/contents/${dirName}/${pdfFileName}`,
+            url: `http://${import.meta.env.VITE_APP_IP}:5601/contents/${dirName}/${pdfFileName}`,
           };
           setPdfToDisplay(newPdfToDisplay);
 
@@ -843,7 +843,7 @@ const App = () => {
 
         // ディレクトリ内のマークダウンファイルとPDFファイル一覧を取得
         const filesResponse = await fetchWithTimeout(
-          `http://127.0.0.1:5601/list_files/${dirName}`,
+          `http://${import.meta.env.VITE_APP_IP}:5601/list_files/${dirName}`,
           {
             method: 'GET',
             mode: 'cors',
@@ -906,7 +906,7 @@ const App = () => {
         // PDFのURLを設定
         setPdfToDisplay({
           type: 'saved',
-          url: `http://127.0.0.1:5601/contents/${dirName}/${pdfFileName}`,
+          url: `http://${import.meta.env.VITE_APP_IP}:5601/contents/${dirName}/${pdfFileName}`,
         });
 
         // マークダウンの取得を開始
@@ -965,7 +965,7 @@ const App = () => {
   // 削除ロジック
   const handleDeleteDirectory = async (dirName) => {
     try {
-      const response = await fetch('http://127.0.0.1:5601/delete_directory', {
+      const response = await fetch(`http://${import.meta.env.VITE_APP_IP}:5601/delete_directory`, {
         method: 'POST',
         mode: 'cors',
         headers: {
@@ -1012,7 +1012,7 @@ const App = () => {
       setIsAppending(true); // 逐次的な追加を開始
       setContent(''); // マークダウン内容をリセット
 
-      const url = 'http://127.0.0.1:5601/trans_markdown';
+      const url = `http://${import.meta.env.VITE_APP_IP}:5601/trans_markdown`;
       const options = {
         method: 'POST',
         mode: 'cors',
@@ -1192,7 +1192,7 @@ const App = () => {
           ? `${baseFileName}_origin.md`
           : `${baseFileName}_trans.md`;
       const markdownResponse = await fetchWithTimeout(
-        `http://127.0.0.1:5601/contents/${dirName}/${mdFileName}`,
+        `http://${import.meta.env.VITE_APP_IP}:5601/contents/${dirName}/${mdFileName}`,
         {
           method: 'GET',
           mode: 'cors',
@@ -1210,11 +1210,11 @@ const App = () => {
       markdownContent = markdownContent
         .replace(
           /!\[Local Image\]\(picture-(\d+)\.png\)/g,
-          `![Local Image](http://127.0.0.1:5601/contents/${dirName}/picture-$1.png)`
+          `![Local Image](http://${import.meta.env.VITE_APP_IP}:5601/contents/${dirName}/picture-$1.png)`
         )
         .replace(
           /!\[Local Image\]\(table-(\d+)\.png\)/g,
-          `![Local Image](http://127.0.0.1:5601/contents/${dirName}/table-$1.png)`
+          `![Local Image](http://${import.meta.env.VITE_APP_IP}:5601/contents/${dirName}/table-$1.png)`
         );
 
       setContent(markdownContent);
@@ -1257,7 +1257,7 @@ const App = () => {
           ? `${baseFileName}_origin.md`
           : `${baseFileName}_trans.md`;
 
-      const url = 'http://127.0.0.1:5601/save_markdown'; // 保存用APIエンドポイント
+      const url = `http://${import.meta.env.VITE_APP_IP}:5601/save_markdown`; // 保存用APIエンドポイント
       const options = {
         method: 'POST', // または 'PUT'、APIに合わせて変更
         mode: 'cors',

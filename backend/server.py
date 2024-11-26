@@ -35,6 +35,9 @@ CORS(app)
 
 CONTENT_DATA_DIR = "/home/ubuntu/workspace/contents"
 
+# contents ディレクトリを作成
+os.makedirs("contents", exist_ok=True)
+
 # contents ディレクトリ内のファイルを提供するエンドポイント
 @app.route('/contents/<path:filename>', methods=['GET'])
 def serve_content_files(filename):
@@ -66,11 +69,11 @@ def list_files(dir_name):
         files = os.listdir(dir_path)
         markdown_files = [f for f in files if f.lower().endswith('.md')]
         pdf_files = [f for f in files if f.lower().endswith('.pdf')]
-        
+
         # PDFファイルが1つであることを確認
         if len(pdf_files) != 1:
             return jsonify({'error': 'ディレクトリ内にPDFファイルが1つではありません'}), 400
-        
+
         return jsonify({
             'markdown_files': markdown_files,
             'pdf_file': pdf_files[0]  # 単一のPDFファイル
@@ -119,7 +122,7 @@ def pdf2markdown():
                 file_name = pdf_file.filename
                 base_file_name = os.path.splitext(file_name)[0]
                 pdf_stream = pdf_file.stream
-                
+
             elif request.is_json and 'url' in request.json:
                 pdf_url = request.json['url']
                 file_name = os.path.basename(pdf_url)
@@ -166,7 +169,7 @@ def extract_text_from_pdf(pdf_stream, file_name):
     output_dir = os.path.join(CONTENT_DATA_DIR, dir_name)
     os.makedirs(output_dir, exist_ok=True)
 
-    yield json.dumps({"status": "Saving PDF file..."})
+    yield json.dumps({"status": "PDFファイルの保存中..."})
 
     # PDFを保存
     pdf_file_path = os.path.join(output_dir, file_name)
@@ -174,7 +177,7 @@ def extract_text_from_pdf(pdf_stream, file_name):
         f.write(pdf_stream.read())
 
     # パイプラインの設定
-    yield json.dumps({"status": "Processing PDF..."})
+    yield json.dumps({"status": "PDFファイルの解析中..."})
     IMAGE_RESOLUTION_SCALE = 2.0
     pipeline_options = PdfPipelineOptions()
     pipeline_options.do_ocr = False
@@ -194,7 +197,7 @@ def extract_text_from_pdf(pdf_stream, file_name):
 
     # PDFを解析
     conv_res = converter.convert(pdf_file_path)
-    yield json.dumps({"status": "Saving images..."})
+    yield json.dumps({"status": "画像保存中..."})
 
     # 図と表を保存
     table_counter = 0
@@ -204,7 +207,7 @@ def extract_text_from_pdf(pdf_stream, file_name):
             table_counter += 1
             element_image_filename = \
                 os.path.join(output_dir, f"table-{table_counter}.png")
-            
+
             with open(element_image_filename, "wb") as fp:
                 element.image.pil_image.save(fp, "PNG")
 
@@ -216,7 +219,7 @@ def extract_text_from_pdf(pdf_stream, file_name):
                 element.image.pil_image.save(fp, "PNG")
 
     # マークダウンに変換
-    yield json.dumps({"status": "Converting to Markdown..."})
+    yield json.dumps({"status": "マークダウン変換中..."})
     md_text = conv_res.document.export_to_markdown()
 
     yield json.dumps({"llm_output": "start"})
@@ -250,7 +253,7 @@ def extract_text_from_pdf(pdf_stream, file_name):
         print(f"Prompt Tokens: {cb.prompt_tokens}")
         print(f"Completion Tokens: {cb.completion_tokens}")
         print(f"Total Cost (USD): ${cb.total_cost}\n")
-    
+
     yield json.dumps({"llm_output": "end"})
 
     result_text = result_text.replace("```markdown", "").replace("```", "")
@@ -259,7 +262,7 @@ def extract_text_from_pdf(pdf_stream, file_name):
     md_filename = os.path.join(output_dir, f"{base_name}_origin.md")
     with open(md_filename, mode="w", encoding="utf-8") as f:
         f.write(result_text)
-    
+
     end_time = time.time()
     print(f"Total time: {(end_time - start_time):.2f} sec")
 
@@ -300,7 +303,7 @@ def trans_markdown():
             with open(origin_md_path, 'r', encoding='utf-8') as f:
                 md_text = f.read()
 
-            yield f'data: {json.dumps({"status": "Translating to Japanese..."})}\n\n'
+            yield f'data: {json.dumps({"status": "日本語に変換中..."})}\n\n'
 
             yield f'data: {json.dumps({"llm_output": "start"})}\n\n'
             result_text = ""
@@ -331,7 +334,7 @@ def trans_markdown():
                 print(f"Prompt Tokens: {cb.prompt_tokens}")
                 print(f"Completion Tokens: {cb.completion_tokens}")
                 print(f"Total Cost (USD): ${cb.total_cost}\n")
-            
+
             yield f'data: {json.dumps({"llm_output": "end"})}\n\n'
 
             # 翻訳結果を保存
@@ -339,7 +342,7 @@ def trans_markdown():
             with open(ja_md_filename, mode="w", encoding="utf-8") as f:
                 f.write(result_text)
 
-            yield f'data: {json.dumps({"status": "Translation completed", "base_file_name": base_name})}\n\n'
+            yield f'data: {json.dumps({"status": "変換完了しました", "base_file_name": base_name})}\n\n'
 
         except Exception as e:
             error_traceback = traceback.format_exc()
@@ -445,7 +448,7 @@ def initialize_state():
 
     # リクエストからinput_dirを取得（クエリパラメータとして）
     input_dir_param = request.args.get('input_dir')
-    
+
     if not input_dir_param:
         return jsonify({"error": "input_dir パラメータが必要です。"}), 400
 
@@ -454,7 +457,7 @@ def initialize_state():
         return jsonify({'error': 'Invalid directory name.'}), 400
 
     input_dir = os.path.join(CONTENT_DATA_DIR, input_dir_param)
-    
+
     if not os.path.isdir(input_dir):
         return jsonify({"error": f"指定されたディレクトリが存在しません: {input_dir_param}"}), 400
 
@@ -617,7 +620,7 @@ def scholar_agent():
                 for value in event.values():
                     response = value["messages"][-1].content
                     state["messages"].append({"role": "assistant", "content": response})
-        
+
         # レスポンスの生成
         response_data = {
             "response": response,
@@ -625,7 +628,7 @@ def scholar_agent():
         }
 
         return jsonify(response_data)
-    
+
     except FileNotFoundError as e:
         return jsonify({"error": str(e)}), 400
     except Exception as e:
