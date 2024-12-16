@@ -6,19 +6,19 @@ services:
       context: ./frontend/build
       args:
         - NODE_VER=16.17.1-slim
-        - HTTP_PROXY=$HTTP_PROXY
-        - http_proxy=$http_proxy
-        - HTTPS_PROXY=$HTTPS_PROXY
-        - https_proxy=$https_proxy
+        # - HTTP_PROXY=$HTTP_PROXY
+        # - http_proxy=$http_proxy
+        # - HTTPS_PROXY=$HTTPS_PROXY
+        # - https_proxy=$https_proxy
     container_name: paper_preview_frontend_ct
     volumes:
       - ${PWD}/frontend:/usr/src/app/
       - /tmp/.X11-unix/:/tmp/.X11-unix
     environment:
-      - HTTP_PROXY=$HTTP_PROXY
-      - http_proxy=$http_proxy
-      - HTTPS_PROXY=$HTTPS_PROXY
-      - https_proxy=$https_proxy
+      # - HTTP_PROXY=$HTTP_PROXY
+      # - http_proxy=$http_proxy
+      # - HTTPS_PROXY=$HTTPS_PROXY
+      # - https_proxy=$https_proxy
       - VITE_APP_IP=$VITE_APP_IP
     ports:
       - "5600:5600"
@@ -30,21 +30,21 @@ services:
   backend_flask:
     build:
       context: ./backend/build
-      args:
-        - HTTP_PROXY=$HTTP_PROXY
-        - http_proxy=$http_proxy
-        - HTTPS_PROXY=$HTTPS_PROXY
-        - https_proxy=$https_proxy
+      # args:
+      #   - HTTP_PROXY=$HTTP_PROXY
+      #   - http_proxy=$http_proxy
+      #   - HTTPS_PROXY=$HTTPS_PROXY
+      #   - https_proxy=$https_proxy
     container_name: paper_preview_backend_ct
     privileged: true
     volumes:
       - ${PWD}/backend:/home/ubuntu/workspace
       - /tmp/.X11-unix/:/tmp/.X11-unix
     environment:
-      HTTP_PROXY: ${HTTP_PROXY}
-      http_proxy: ${http_proxy}
-      HTTPS_PROXY: ${HTTPS_PROXY}
-      https_proxy: ${https_proxy}
+      # HTTP_PROXY: ${HTTP_PROXY}
+      # http_proxy: ${http_proxy}
+      # HTTPS_PROXY: ${HTTPS_PROXY}
+      # https_proxy: ${https_proxy}
       TZ: Asia/Tokyo
       DISPLAY: $DISPLAY
       QT_X11_NO_MITSHM: '1'
