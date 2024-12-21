@@ -1,3 +1,4 @@
+import glob
 import os
 import json
 import time
@@ -9,12 +10,18 @@ from io import BytesIO
 import traceback
 from datetime import datetime
 from dotenv import load_dotenv
+
+# 追加: SQLite関連
+import sqlite3
+
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage
+from langchain_core.prompts import ChatPromptTemplate
 from langchain_community.callbacks.manager import get_openai_callback
+from langchain_core.output_parsers import StrOutputParser
 
-from typing import Annotated  # 型ヒント用のモジュール
-from typing_extensions import TypedDict  # 型ヒント用の拡張モジュール
+from typing import Annotated
+from typing_extensions import TypedDict
 from langgraph.graph import StateGraph
 from langgraph.graph.message import add_messages
 from langchain_core.prompts import PromptTemplate
@@ -33,35 +40,211 @@ load_dotenv()
 app = Flask(__name__)
 CORS(app)
 
+# ----------- コンテンツの保管先 -----------
 CONTENT_DATA_DIR = "/home/ubuntu/workspace/contents"
+os.makedirs(CONTENT_DATA_DIR, exist_ok=True)
 
-# contents ディレクトリを作成
-os.makedirs("contents", exist_ok=True)
+# ----------- SQLite初期設定 -----------
+DB_PATH = os.path.join(CONTENT_DATA_DIR, 'chat_history.db')
+conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+cursor = conn.cursor()
 
-# contents ディレクトリ内のファイルを提供するエンドポイント
+# セッション（最大30件まで保持）
+cursor.execute('''
+CREATE TABLE IF NOT EXISTS chat_sessions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    dir_name TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now','+9 hours'))
+)
+''')
+
+# セッションに属するメッセージ群
+cursor.execute('''
+CREATE TABLE IF NOT EXISTS chat_messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id INTEGER NOT NULL,
+    role TEXT NOT NULL,
+    content TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(session_id) REFERENCES chat_sessions(id)
+)
+''')
+conn.commit()
+
+def remove_oldest_session_if_needed(dir_name):
+    """
+    指定ディレクトリに紐づくセッションが30件を超えるなら、最も古いセッションを削除する。
+    """
+    cursor.execute('''
+        SELECT id FROM chat_sessions
+        WHERE dir_name = ?
+        ORDER BY created_at ASC
+    ''', (dir_name,))
+    sessions = cursor.fetchall()
+    if len(sessions) > 30:
+        oldest_id = sessions[0][0]
+        cursor.execute('DELETE FROM chat_messages WHERE session_id = ?', (oldest_id,))
+        cursor.execute('DELETE FROM chat_sessions WHERE id = ?', (oldest_id,))
+        conn.commit()
+
+@app.route('/create_chat_session', methods=['POST'])
+def create_chat_session():
+    """
+    新しいチャットセッションを作成し、そのIDを返す。
+    dir_nameに紐づくセッションが30件以上ある場合は古い順に1件削除。
+    """
+    dir_name = request.args.get('dir_name', None)
+    if not dir_name:
+        return jsonify({'error': 'dir_name is required'}), 400
+
+    # 不正防止
+    if '..' in dir_name or '/' in dir_name or '\\' in dir_name:
+        return jsonify({'error': 'Invalid directory name.'}), 400
+
+    # 古いセッションを削除するかチェック
+    remove_oldest_session_if_needed(dir_name)
+
+    # 新規セッション
+    cursor.execute(
+        'INSERT INTO chat_sessions (dir_name) VALUES (?)',
+        (dir_name,)
+    )
+    new_session_id = cursor.lastrowid
+    conn.commit()
+
+    return jsonify({'session_id': new_session_id}), 200
+
+@app.route('/list_chat_sessions', methods=['GET'])
+def list_chat_sessions():
+    """
+    指定されたdir_nameのセッション一覧を新しい順に返す
+    """
+    dir_name = request.args.get('dir_name', None)
+    if not dir_name:
+        return jsonify({'error': 'dir_name is required'}), 400
+
+    if '..' in dir_name or '/' in dir_name or '\\' in dir_name:
+        return jsonify({'error': 'Invalid directory name.'}), 400
+
+    cursor.execute('''
+        SELECT id, created_at
+        FROM chat_sessions
+        WHERE dir_name = ?
+        ORDER BY created_at DESC
+    ''', (dir_name,))
+    rows = cursor.fetchall()
+    sessions = []
+    for r in rows:
+        sessions.append({
+            'id': r[0],
+            # フロント側で「タイムスタンプ」に書き換える場合あり
+            'created_at': str(r[1])  
+        })
+    return jsonify({'sessions': sessions}), 200
+
+@app.route('/get_chat_history', methods=['GET'])
+def get_chat_history():
+    """
+    セッションIDを指定して、そのメッセージ一覧を古い順に返す
+    """
+    session_id = request.args.get('session_id', None)
+    if not session_id:
+        return jsonify({'error': 'session_id is required'}), 400
+
+    cursor.execute('''
+        SELECT role, content
+        FROM chat_messages
+        WHERE session_id = ?
+        ORDER BY id ASC
+    ''', (session_id,))
+    rows = cursor.fetchall()
+
+    messages = []
+    for r in rows:
+        messages.append({
+            'role': r[0],
+            'type': 'text',
+            'content': r[1],
+        })
+    return jsonify({'messages': messages}), 200
+
+@app.route('/delete_chat_session', methods=['POST'])
+def delete_chat_session():
+    """
+    指定されたセッションIDを削除する
+    """
+    data = request.get_json()
+    if not data or 'session_id' not in data:
+        return jsonify({'error': 'session_id is required'}), 400
+    session_id = data['session_id']
+
+    cursor.execute('DELETE FROM chat_messages WHERE session_id = ?', (session_id,))
+    cursor.execute('DELETE FROM chat_sessions WHERE id = ?', (session_id,))
+    conn.commit()
+    return jsonify({'message': f'Session {session_id} deleted.'}), 200
+
+@app.route('/bulk_save_chat', methods=['POST'])
+def bulk_save_chat():
+    """
+    復元したチャットを新セッションにまとめて保存し直すためのエンドポイント
+    リクエスト例:
+    {
+      "session_id": 123,
+      "messages": [
+        {"role": "user", "content": "・・・"},
+        {"role": "assistant", "content": "・・・"},
+        ...
+      ]
+    }
+    """
+    data = request.get_json()
+    session_id = data.get('session_id')
+    messages = data.get('messages', [])
+
+    if not session_id:
+        return jsonify({'error': 'session_id is required'}), 400
+    if not isinstance(messages, list) or len(messages) == 0:
+        return jsonify({'error': 'No messages to save or invalid format'}), 400
+
+    # 一括挿入
+    for m in messages:
+        role = m.get('role')
+        content = m.get('content')
+        if role and content:
+            cursor.execute('''
+                INSERT INTO chat_messages (session_id, role, content)
+                VALUES (?, ?, ?)
+            ''', (session_id, role, content))
+    conn.commit()
+
+    return jsonify({'message': 'Bulk save complete'}), 200
+
+def save_chat_message(session_id, role, content):
+    """
+    単発メッセージをDBに保存する
+    """
+    cursor.execute('''
+        INSERT INTO chat_messages (session_id, role, content)
+        VALUES (?, ?, ?)
+    ''', (session_id, role, content))
+    conn.commit()
+
+
 @app.route('/contents/<path:filename>', methods=['GET'])
 def serve_content_files(filename):
     """
-    指定されたファイルを contents ディレクトリから提供するエンドポイント。
-    セキュリティ対策として、CONTENT_DATA_DIR以下のファイルのみを提供。
+    指定されたファイルを contents ディレクトリから提供。
     """
     try:
-        # セキュリティ対策: CONTENT_DATA_DIR以下のファイルのみを提供
         safe_path = os.path.join(CONTENT_DATA_DIR, filename)
         if not os.path.abspath(safe_path).startswith(os.path.abspath(CONTENT_DATA_DIR)):
             return jsonify({'error': 'Invalid file path'}), 400
-        # ファイルを提供
         return send_from_directory(CONTENT_DATA_DIR, filename)
     except FileNotFoundError:
         return jsonify({'error': 'File not found'}), 404
 
-# ディレクトリ内のマークダウンファイルとPDFファイルを一覧取得するエンドポイント
 @app.route('/list_files/<path:dir_name>', methods=['GET'])
 def list_files(dir_name):
-    """
-    指定されたディレクトリ内のマークダウンファイルとPDFファイルの一覧を取得するエンドポイント。
-    ディレクトリには必ず1つのPDFファイルが存在すると仮定。
-    """
     try:
         dir_path = os.path.join(CONTENT_DATA_DIR, dir_name)
         if not os.path.isdir(dir_path):
@@ -70,31 +253,24 @@ def list_files(dir_name):
         markdown_files = [f for f in files if f.lower().endswith('.md')]
         pdf_files = [f for f in files if f.lower().endswith('.pdf')]
 
-        # PDFファイルが1つであることを確認
         if len(pdf_files) != 1:
             return jsonify({'error': 'ディレクトリ内にPDFファイルが1つではありません'}), 400
 
         return jsonify({
             'markdown_files': markdown_files,
-            'pdf_file': pdf_files[0]  # 単一のPDFファイル
+            'pdf_file': pdf_files[0]
         }), 200
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
 @app.route('/list_contents', methods=['GET'])
 def list_contents():
-    """
-    contents ディレクトリ内のサブディレクトリ一覧を更新日時の降順で返すエンドポイント。
-    ディレクトリ名からタイムスタンプを除去して表示名を作成する。
-    """
     try:
         dir_paths = [os.path.join(CONTENT_DATA_DIR, d) for d in os.listdir(CONTENT_DATA_DIR) if os.path.isdir(os.path.join(CONTENT_DATA_DIR, d))]
-        # ディレクトリの更新日時でソート（新しい順）
         dir_paths_sorted = sorted(dir_paths, key=os.path.getmtime, reverse=True)
         directories = []
         for dir_path in dir_paths_sorted:
             d = os.path.basename(dir_path)
-            # タイムスタンプを除去して表示名を作成
             parts = d.split('_', 1)
             if len(parts) == 2:
                 display_name = parts[1]
@@ -108,8 +284,6 @@ def list_contents():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-
-# アップロードされたPDFを解析しマークダウンにして保存するエンドポイント
 @app.route('/pdf2markdown', methods=['POST'])
 def pdf2markdown():
     @stream_with_context
@@ -122,7 +296,6 @@ def pdf2markdown():
                 file_name = pdf_file.filename
                 base_file_name = os.path.splitext(file_name)[0]
                 pdf_stream = pdf_file.stream
-
             elif request.is_json and 'url' in request.json:
                 pdf_url = request.json['url']
                 file_name = os.path.basename(pdf_url)
@@ -156,27 +329,20 @@ def pdf2markdown():
     return Response(generate(), mimetype='text/event-stream')
 
 def extract_text_from_pdf(pdf_stream, file_name):
-    """
-    PDFストリームからテキストを抽出し、マークダウンに変換して保存する。
-    """
-
     start_time = time.time()
 
-    # 保存先ディレクトリの作成
     base_name = os.path.splitext(file_name)[0]
     timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
-    dir_name = f"{timestamp}_{base_name}"  # タイムスタンプを含める
+    dir_name = f"{timestamp}_{base_name}"
     output_dir = os.path.join(CONTENT_DATA_DIR, dir_name)
     os.makedirs(output_dir, exist_ok=True)
 
     yield json.dumps({"status": "PDFファイルの保存中..."})
 
-    # PDFを保存
     pdf_file_path = os.path.join(output_dir, file_name)
     with open(pdf_file_path, mode="wb") as f:
         f.write(pdf_stream.read())
 
-    # パイプラインの設定
     yield json.dumps({"status": "PDFファイルの解析中..."})
     IMAGE_RESOLUTION_SCALE = 2.0
     pipeline_options = PdfPipelineOptions()
@@ -195,30 +361,24 @@ def extract_text_from_pdf(pdf_stream, file_name):
         }
     )
 
-    # PDFを解析
     conv_res = converter.convert(pdf_file_path)
     yield json.dumps({"status": "画像保存中..."})
 
-    # 図と表を保存
     table_counter = 0
     picture_counter = 0
     for element, _level in conv_res.document.iterate_items():
         if isinstance(element, TableItem):
             table_counter += 1
-            element_image_filename = \
-                os.path.join(output_dir, f"table-{table_counter}.png")
-
+            element_image_filename = os.path.join(output_dir, f"table-{table_counter}.png")
             with open(element_image_filename, "wb") as fp:
                 element.image.pil_image.save(fp, "PNG")
 
         if isinstance(element, PictureItem):
             picture_counter += 1
-            element_image_filename = \
-                os.path.join(output_dir, f"picture-{picture_counter}.png")
+            element_image_filename = os.path.join(output_dir, f"picture-{picture_counter}.png")
             with open(element_image_filename, "wb") as fp:
                 element.image.pil_image.save(fp, "PNG")
 
-    # マークダウンに変換
     yield json.dumps({"status": "マークダウン変換中..."})
     md_text = conv_res.document.export_to_markdown()
 
@@ -226,8 +386,6 @@ def extract_text_from_pdf(pdf_stream, file_name):
     result_text = ""
 
     with get_openai_callback() as cb:
-
-        # LLMで調整
         chat_model = ChatOpenAI(model="gpt-4o-mini", temperature=0, streaming=True)
         system_prompt = SystemMessage(
             content=\
@@ -258,7 +416,6 @@ def extract_text_from_pdf(pdf_stream, file_name):
 
     result_text = result_text.replace("```markdown", "").replace("```", "")
 
-    # マークダウンを保存
     md_filename = os.path.join(output_dir, f"{base_name}_origin.md")
     with open(md_filename, mode="w", encoding="utf-8") as f:
         f.write(result_text)
@@ -266,12 +423,9 @@ def extract_text_from_pdf(pdf_stream, file_name):
     end_time = time.time()
     print(f"Total time: {(end_time - start_time):.2f} sec")
 
-
-    # 保存先のディレクトリ名を返す
     yield json.dumps({"dir_name": dir_name, "base_file_name": base_name})
 
 
-# 追加: マークダウンを日本語に翻訳するエンドポイント
 @app.route('/trans_markdown', methods=['POST'])
 def trans_markdown():
     @stream_with_context
@@ -288,7 +442,6 @@ def trans_markdown():
                 yield f'data: {json.dumps({"error": "Directory not found"})}\n\n'
                 return
 
-            # originが付くマークダウンファイルを取得
             files = os.listdir(dir_path)
             origin_md_files = [f for f in files if f.lower().endswith('_origin.md')]
             if not origin_md_files:
@@ -299,17 +452,14 @@ def trans_markdown():
             origin_md_path = os.path.join(dir_path, origin_md_file)
             base_name = os.path.splitext(origin_md_file)[0].replace('_origin', '')
 
-            # マークダウンテキストを読み込む
             with open(origin_md_path, 'r', encoding='utf-8') as f:
                 md_text = f.read()
 
             yield f'data: {json.dumps({"status": "日本語に変換中..."})}\n\n'
-
             yield f'data: {json.dumps({"llm_output": "start"})}\n\n'
             result_text = ""
 
             with get_openai_callback() as cb:
-                # LLMで翻訳
                 chat_model = ChatOpenAI(model="gpt-4o-mini", temperature=0, streaming=True)
                 system_prompt = SystemMessage(
                     content=\
@@ -337,13 +487,11 @@ def trans_markdown():
 
             yield f'data: {json.dumps({"llm_output": "end"})}\n\n'
 
-            # 翻訳結果を保存
             ja_md_filename = os.path.join(dir_path, f"{base_name}_trans.md")
             with open(ja_md_filename, mode="w", encoding="utf-8") as f:
                 f.write(result_text)
 
             yield f'data: {json.dumps({"status": "変換完了しました", "base_file_name": base_name})}\n\n'
-
         except Exception as e:
             error_traceback = traceback.format_exc()
             print(error_traceback)
@@ -353,91 +501,59 @@ def trans_markdown():
     return Response(generate(), mimetype='text/event-stream')
 
 
-# 追加: 編集モードでマークダウンを保存するエンドポイント
 @app.route('/save_markdown', methods=['POST'])
 def save_markdown():
-    """
-    クライアントから送信されたマークダウン内容を指定されたディレクトリとファイルに保存するエンドポイント。
-    リクエストボディ:
-    {
-        "dir_name": "ディレクトリ名",
-        "file_name": "ファイル名.md",
-        "content": "マークダウン内容"
-    }
-    """
     try:
         data = request.get_json()
         dir_name = data.get('dir_name')
         file_name = data.get('file_name')
         content = data.get('content')
 
-        # 必要なフィールドがすべて存在するか確認
         if not dir_name or not file_name or content is None:
             return jsonify({'error': 'dir_name, file_name, and content are required.'}), 400
 
-        # セキュリティ対策: ディレクトリ名とファイル名にディレクトリトラバーサルが含まれていないかチェック
         if '..' in dir_name or '/' in dir_name or '\\' in dir_name:
             return jsonify({'error': 'Invalid directory name.'}), 400
 
         if '..' in file_name or '/' in file_name or '\\' in file_name:
             return jsonify({'error': 'Invalid file name.'}), 400
 
-        # ファイル名が .md で終わることを確認
         if not file_name.lower().endswith('.md'):
             return jsonify({'error': 'Invalid file name. Must end with .md'}), 400
 
-        # 対象ディレクトリのパスを構築
         target_dir = os.path.join(CONTENT_DATA_DIR, dir_name)
         if not os.path.isdir(target_dir):
             return jsonify({'error': 'Directory not found.'}), 404
 
-        # 対象ファイルのパスを構築
         target_file_path = os.path.join(target_dir, file_name)
-
-        # ファイルを保存
         with open(target_file_path, 'w', encoding='utf-8') as f:
             f.write(content)
 
         return jsonify({'message': 'File saved successfully.'}), 200
-
     except Exception as e:
         error_traceback = traceback.format_exc()
         print(error_traceback)
         return jsonify({'error': f'Error saving file: {str(e)}'}), 500
 
-# 追加: ディレクトリを削除するエンドポイント
 @app.route('/delete_directory', methods=['POST'])
 def delete_directory():
-    """
-    クライアントから送信されたディレクトリ名を削除するエンドポイント。
-    リクエストボディ:
-    {
-        "dir_name": "ディレクトリ名"
-    }
-    """
     try:
         data = request.get_json()
         dir_name = data.get('dir_name')
-
-        # 必要なフィールドが存在するか確認
         if not dir_name:
             return jsonify({'error': 'dir_name is required.'}), 400
 
-        # セキュリティ対策: ディレクトリ名にディレクトリトラバーサルが含まれていないかチェック
         if '..' in dir_name or '/' in dir_name or '\\' in dir_name:
             return jsonify({'error': 'Invalid directory name.'}), 400
 
-        # 対象ディレクトリのパスを構築
         target_dir = os.path.join(CONTENT_DATA_DIR, dir_name)
         if not os.path.isdir(target_dir):
             return jsonify({'error': 'Directory not found.'}), 404
 
-        # ディレクトリとその内容を削除
         import shutil
         shutil.rmtree(target_dir)
 
         return jsonify({'message': f'Directory "{dir_name}" has been deleted successfully.'}), 200
-
     except Exception as e:
         error_traceback = traceback.format_exc()
         print(error_traceback)
@@ -445,59 +561,32 @@ def delete_directory():
 
 @app.route('/initialize_state', methods=['GET'])
 def initialize_state():
-
-    # リクエストからinput_dirを取得（クエリパラメータとして）
     input_dir_param = request.args.get('input_dir')
-
     if not input_dir_param:
         return jsonify({"error": "input_dir パラメータが必要です。"}), 400
 
-    # セキュリティ対策: ディレクトリ名にディレクトリトラバーサルが含まれていないかチェック
     if '..' in input_dir_param or '/' in input_dir_param or '\\' in input_dir_param:
         return jsonify({'error': 'Invalid directory name.'}), 400
 
     input_dir = os.path.join(CONTENT_DATA_DIR, input_dir_param)
-
     if not os.path.isdir(input_dir):
         return jsonify({"error": f"指定されたディレクトリが存在しません: {input_dir_param}"}), 400
 
-    # マークダウンファイルを取得
     md_files = [f for f in os.listdir(input_dir) if f.endswith('_origin.md')]
     if not md_files:
         return jsonify({"error": "ディレクトリ内に_origin.mdファイルが存在しません。"}), 400
 
     md_path = os.path.join(input_dir, md_files[0])
-
     with open(md_path, mode="r") as f:
         md_text = f.read()
 
-    # 画像のパスリストを取得
     png_files = []
     for root, dirs, files in os.walk(input_dir):
         for file in files:
             if (file.startswith('table') or file.startswith('picture')) and file.endswith('.png'):
                 png_files.append(os.path.join(root, file))
 
-    # 状態の型定義
-    class State(TypedDict):
-        messages: Annotated[list, add_messages]
-
-    # グラフビルダーを作成
-    graph_builder = StateGraph(State)
-    chat_model = ChatOpenAI(model="gpt-4o-mini", temperature=1)
-
-    # チャットボット関数
-    def chatbot(state: State):
-        return {"messages": [chat_model.invoke(state["messages"])]}
-
-    graph_builder.add_node("chatbot", chatbot)
-    graph_builder.set_entry_point("chatbot")
-    agent = graph_builder.compile()
-
-    # チャットヒストリーを作成
     state = {"messages": []}
-
-    # システムプロンプトを設定
     system_prompt = """
 あなたは、論文解説のスペシャリストです。
 以下の論文内容を理解し、ユーザーからの質問に分かりやすく回答してください。
@@ -508,7 +597,6 @@ def initialize_state():
     }
     state["messages"].append(system_message)
 
-    # ユーザープロンプトを設定
     prompt_template = PromptTemplate(
         input_variables=["paper_content"],
         template="""
@@ -525,7 +613,6 @@ def initialize_state():
     })
     user_prompt_text = user_prompt.text
 
-    # 画像の情報を追加
     image_info = "\n\n<図の詳細>"
     for i, png_file in enumerate(png_files):
         png_file_name = os.path.basename(png_file)
@@ -534,14 +621,12 @@ def initialize_state():
 
     user_prompt_text += image_info
 
-    # ユーザーメッセージを作成
     user_message = {
         "role": "user",
         "content": user_prompt_text
     }
     state["messages"].append(user_message)
 
-    # AIからの最初の応答を設定
     assistant_prompt = """
 論文内容を理解しました。
 質問をどうぞ。
@@ -550,90 +635,73 @@ def initialize_state():
         {"role": "assistant", "content": assistant_prompt},
     )
 
-    # stateをJSON形式で返す
     return jsonify(state)
 
-# 状態の型定義
 class State(TypedDict):
     messages: Annotated[list, add_messages]
 
-
 def initialize_agent():
-    """
-    指定されたディレクトリから必要なファイルを読み込み、
-    エージェントと初期状態（state）を初期化します。
-    """
-
-    # グラフビルダーを作成
     graph_builder = StateGraph(State)
     chat_model = ChatOpenAI(model="gpt-4o-mini", temperature=1)
 
-    # チャットボット関数
     def chatbot(state: State):
         return {"messages": [chat_model.invoke(state["messages"])]}
 
     graph_builder.add_node("chatbot", chatbot)
     graph_builder.set_entry_point("chatbot")
     agent = graph_builder.compile()
-
     return agent
-
 
 @app.route('/scholar_agent', methods=['POST'])
 def scholar_agent():
-    """
-    エージェントを作成し、リクエストからメッセージの履歴とユーザーからの質問を受け取って、
-    エージェントで質問に回答し、生成された回答と更新されたメッセージの履歴をレスポンスで返します。
-    """
     data = request.get_json()
-
     if not data:
         return jsonify({"error": "JSONペイロードが必要です。"}), 400
 
     state = data.get('state')
     user_input = data.get('user_input')
+    session_id = data.get('session_id')
 
     if not state:
         return jsonify({"error": "state が必要です。"}), 400
-
     if not user_input:
         return jsonify({"error": "user_input が必要です。"}), 400
+    if not session_id:
+        return jsonify({"error": "session_id が必要です。"}), 400
 
     if not isinstance(state, dict) or 'messages' not in state:
         return jsonify({"error": "state は有効な形式でなければなりません。"}), 400
 
     try:
-        # エージェントと初期状態を初期化
-        agent = initialize_agent()
+        # DBにユーザーのメッセージを保存
+        save_chat_message(session_id, 'user', user_input)
 
-        # ユーザーの質問を状態に追加
+        agent = initialize_agent()
         user_message = {
             "role": "user",
             "content": user_input
         }
         state["messages"].append(user_message)
 
-        # ユーザー入力に基づいてチャットボットが応答を生成
+        response = None
         with get_openai_callback() as cb:
-            # agent.streamを使用して応答を取得
             for event in agent.stream(state):
                 for value in event.values():
                     response = value["messages"][-1].content
                     state["messages"].append({"role": "assistant", "content": response})
 
-        # レスポンスの生成
+        # DBにアシスタントのメッセージを保存
+        save_chat_message(session_id, 'assistant', response)
+
         response_data = {
             "response": response,
             "state": state
         }
-
         return jsonify(response_data)
-
     except FileNotFoundError as e:
         return jsonify({"error": str(e)}), 400
     except Exception as e:
         return jsonify({"error": f"内部エラーが発生しました: {str(e)}"}), 500
-
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5601, debug=True)

@@ -8,6 +8,16 @@ import { Textarea } from '@/components/ui/textarea';
 import { Card, CardContent } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectLabel,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+
+import {
   Send,
   Image,
   X,
@@ -74,6 +84,14 @@ const PaperPreview = () => {
   const [chatLoading, setChatLoading] = useState(false);
   const [isAssistantTyping, setIsAssistantTyping] = useState(false);
 
+  // セッション管理用
+  const [sessionId, setSessionId] = useState(null);             // 現在のセッションID（チャットを保存するID）
+  const [chatSessions, setChatSessions] = useState([]);          // 該当dir_nameのセッション一覧
+  const [restoredSessionId, setRestoredSessionId] = useState(null); 
+
+  // フロント側で新規セッション判定を行うため、送信時にフラグを仕込む
+  const [isNewSession, setIsNewSession] = useState(false);
+
   const updateContainerWidth = () => {
     if (pdfContainerRef.current) {
       const width = pdfContainerRef.current.offsetWidth;
@@ -107,6 +125,111 @@ const PaperPreview = () => {
     }
   };
 
+  // 指定のdir_nameに紐づくチャットセッション一覧を取得
+  const fetchChatSessions = async (dirName) => {
+    try {
+      const res = await fetch(
+        `http://${import.meta.env.VITE_APP_IP}:5601/list_chat_sessions?dir_name=${encodeURIComponent(dirName)}`,
+        { method: 'GET', mode: 'cors' }
+      );
+      if (!res.ok) {
+        const errorData = await res.json();
+        throw new Error(errorData.error || 'チャットセッション一覧の取得に失敗しました');
+      }
+      const data = await res.json();
+      setChatSessions(data.sessions);
+    } catch (error) {
+      console.error('Error fetching chat sessions:', error);
+      alert('チャットセッション一覧の取得に失敗しました: ' + error.message);
+    }
+  };
+
+  // セッションIDを指定してメッセージを復元
+  const fetchChatHistory = async (sessionIdToLoad) => {
+    try {
+      const res = await fetch(
+        `http://${import.meta.env.VITE_APP_IP}:5601/get_chat_history?session_id=${sessionIdToLoad}`,
+        { method: 'GET', mode: 'cors' }
+      );
+      if (!res.ok) {
+        const errorData = await res.json();
+        throw new Error(errorData.error || 'チャット履歴の取得に失敗しました');
+      }
+      const data = await res.json();
+      // フロントのチャットにも反映
+      setChat(data.messages);
+    } catch (error) {
+      console.error('Error fetching chat history:', error);
+      alert('チャット履歴の取得に失敗しました: ' + error.message);
+    }
+  };
+
+  // 新しいセッションを作成
+  const createNewSession = async (dirName) => {
+    try {
+      const res = await fetch(
+        `http://${import.meta.env.VITE_APP_IP}:5601/create_chat_session?dir_name=${encodeURIComponent(dirName)}`,
+        { method: 'POST', mode: 'cors' }
+      );
+      if (!res.ok) {
+        const errorData = await res.json();
+        throw new Error(errorData.error || '新規チャットセッションの作成に失敗しました');
+      }
+      const data = await res.json();
+      return data.session_id;
+    } catch (error) {
+      console.error('Error creating new session:', error);
+      alert('新規チャットセッションの作成に失敗しました: ' + error.message);
+      return null;
+    }
+  };
+
+  // 既存セッションを削除
+  const deleteChatSession = async (oldSessionId) => {
+    try {
+      const res = await fetch(`http://${import.meta.env.VITE_APP_IP}:5601/delete_chat_session`, {
+        method: 'POST',
+        mode: 'cors',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session_id: oldSessionId }),
+      });
+      if (!res.ok) {
+        const errorData = await res.json();
+        throw new Error(errorData.error || 'セッションの削除に失敗しました');
+      }
+      console.log(`Session ${oldSessionId} deleted successfully`);
+    } catch (error) {
+      console.error('Error deleting chat session:', error);
+      alert('セッション削除中にエラーが発生しました: ' + error.message);
+    }
+  };
+
+  // まとめてメッセージを挿入(旧チャット含めて新セッションに再保存) 
+  const bulkSaveChat = async (newSessId, messages) => {
+    try {
+      const res = await fetch(`http://${import.meta.env.VITE_APP_IP}:5601/bulk_save_chat`, {
+        method: 'POST',
+        mode: 'cors',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          session_id: newSessId,
+          messages: messages.map((m) => ({
+            role: m.role,
+            content: m.content,
+          })),
+        }),
+      });
+      if (!res.ok) {
+        const errorData = await res.json();
+        throw new Error(errorData.error || '一括保存に失敗しました');
+      }
+      console.log(`Bulk save to new session ${newSessId} completed.`);
+    } catch (error) {
+      console.error('Error bulk saving chat:', error);
+      alert('一括保存中にエラーが発生しました: ' + error.message);
+    }
+  };
+
   useLayoutEffect(() => {
     updateContainerWidth();
   }, [pdfToDisplay, selectedDirectory]);
@@ -127,9 +250,14 @@ const PaperPreview = () => {
       alert('ディレクトリが選択されていません');
       return;
     }
-    await fetchAgentState(selectedDirectory);
+    // 単にフロント側をリセット
     setChat([]);
-    console.log('Chat has been reset.');
+    setSessionId(null);
+    setRestoredSessionId(null);
+    setIsNewSession(false);
+    console.log('Chat has been reset in the frontend.');
+    // エージェント状態初期化
+    await fetchAgentState(selectedDirectory);
   };
 
   const fetchAgentState = async (dirName) => {
@@ -149,82 +277,120 @@ const PaperPreview = () => {
 
       const data = await response.json();
       setAgentState(data);
-      setChat([]);
     } catch (error) {
       console.error('Error initializing agent state:', error);
       alert('エージェントの初期化中にエラーが発生しました: ' + error.message);
     }
   };
 
+  // メッセージ送信時の処理
   const handleSend = async () => {
-    if (message.trim() || pendingImages.length > 0) {
-      if (!agentState) {
-        alert('エージェントが初期化されていません');
-        return;
+    // メッセージが空 & 画像アップロードなし の場合は何もしない
+    if (!message.trim() && pendingImages.length === 0) {
+      return;
+    }
+    // ディレクトリが選択されていなければエラー
+    if (!selectedDirectory) {
+      alert('ディレクトリが選択されていません');
+      return;
+    }
+    if (!agentState) {
+      alert('エージェントが初期化されていません');
+      return;
+    }
+
+    // 送信したタイミングでメッセージ入力欄をクリア
+    const currentMessage = message.trim();
+    setMessage('');
+
+    try {
+      setChatLoading(true);
+      setIsAssistantTyping(true);
+
+      // 「復元したセッションID」で表示中かつ sessionIdがnull の場合は「削除→新規作成→過去ログ移し替え」
+      let finalSessionId = sessionId;
+      if (restoredSessionId && sessionId === null) {
+        await deleteChatSession(restoredSessionId);
+        finalSessionId = await createNewSession(selectedDirectory);
+        setSessionId(finalSessionId);
+        if (chat.length > 0) {
+          await bulkSaveChat(finalSessionId, chat);
+        }
+        setRestoredSessionId(null);
+        setIsNewSession(false);
       }
 
-      const userMessages = [];
-
-      if (message.trim()) {
-        userMessages.push({ role: 'user', content: message });
+      // もし既存のsessionIdがなければ新規セッションを作成
+      let sessionWasNewlyCreated = false;
+      if (!finalSessionId) {
+        finalSessionId = await createNewSession(selectedDirectory);
+        setSessionId(finalSessionId);
+        sessionWasNewlyCreated = true;
+        setIsNewSession(true);
       }
 
+      // ユーザーメッセージを画面に追加
       setChat((prevChat) => [
         ...prevChat,
-        { role: 'user', type: 'text', content: message },
+        { role: 'user', type: 'text', content: currentMessage },
       ]);
 
-      setMessage('');
-
+      // agentState 側にもユーザーメッセージを追加
       const newAgentState = { ...agentState };
-      userMessages.forEach((msg) => {
-        newAgentState.messages.push(msg);
+      newAgentState.messages.push({ role: 'user', content: currentMessage });
+
+      // scholar_agent へ問い合わせ
+      const response = await fetch(`http://${import.meta.env.VITE_APP_IP}:5601/scholar_agent`, {
+        method: 'POST',
+        mode: 'cors',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          state: newAgentState,
+          user_input: currentMessage,
+          session_id: finalSessionId,
+        }),
       });
 
-      try {
-        setChatLoading(true);
-        setIsAssistantTyping(true);
-
-        const response = await fetch(`http://${import.meta.env.VITE_APP_IP}:5601/scholar_agent`, {
-          method: 'POST',
-          mode: 'cors',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            state: newAgentState,
-            user_input: message,
-          }),
-        });
-
-        if (!response.ok) {
-          const errorData = await response.json();
-          throw new Error(errorData.error || 'エージェントからの応答取得に失敗しました');
-        }
-
-        const data = await response.json();
-
-        setAgentState(data.state);
-
-        const assistantMessage = data.state.messages[data.state.messages.length - 1];
-
-        setChat((prevChat) => [
-          ...prevChat,
-          {
-            role: assistantMessage.role,
-            type: 'text',
-            content: assistantMessage.content,
-          },
-        ]);
-
-        setPendingImages([]);
-      } catch (error) {
-        console.error('Error during chat:', error);
-        alert('チャット中にエラーが発生しました: ' + error.message);
-      } finally {
-        setChatLoading(false);
-        setIsAssistantTyping(false);
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'エージェントからの応答取得に失敗しました');
       }
+
+      const data = await response.json();
+      setAgentState(data.state);
+
+      const assistantMessage = data.state.messages[data.state.messages.length - 1];
+
+      // アシスタントメッセージを画面に追加
+      setChat((prevChat) => [
+        ...prevChat,
+        {
+          role: assistantMessage.role,
+          type: 'text',
+          content: assistantMessage.content,
+        },
+      ]);
+
+      // 画像は今回未送信なので、ここでは pendingImages をクリア
+      setPendingImages([]);
+
+      // 新規セッションのとき、最初のメッセージが返ってきた後にタイトルを「タイムスタンプ」に書き換える
+      if (sessionWasNewlyCreated) {
+        // 送信後にセッション一覧を取得
+        await fetchChatSessions(selectedDirectory);
+        setRestoredSessionId(finalSessionId);
+      }
+
+    } catch (error) {
+      console.error('Error during chat:', error);
+      alert('チャット中にエラーが発生しました: ' + error.message);
+    } finally {
+      setChatLoading(false);
+      setIsAssistantTyping(false);
+      // 追加のセッション一覧リロード
+      await fetchChatSessions(selectedDirectory);
     }
   };
 
@@ -283,6 +449,7 @@ const PaperPreview = () => {
     }
   }, [content, isAppending]);
 
+  // PDF選択 or URL指定時
   useEffect(() => {
     const processPdf = async () => {
       if (!pdfToDisplay) return;
@@ -301,6 +468,11 @@ const PaperPreview = () => {
           setCurrentMarkdownType('origin');
           setBaseFileName('');
           setAgentState(null);
+          setChat([]);
+          setSessionId(null);
+          setChatSessions([]);
+          setRestoredSessionId(null);
+          setIsNewSession(false);
 
           const url = `http://${import.meta.env.VITE_APP_IP}:5601/pdf2markdown`;
           let options = {
@@ -440,6 +612,10 @@ const PaperPreview = () => {
           }
 
           await fetchAgentState(dirName);
+          // チャットはまだ行われていないのでセッション作成しない
+          // セッション一覧を取得
+          await fetchChatSessions(dirName);
+
         } catch (error) {
           console.error('Error processing PDF:', error);
           alert('処理中にエラーが発生しました: ' + error.message);
@@ -454,6 +630,7 @@ const PaperPreview = () => {
     processPdf();
   }, [pdfToDisplay]);
 
+  // ディレクトリ選択時
   useEffect(() => {
     const processDirectory = async () => {
       if (!selectedDirectory) return;
@@ -472,6 +649,11 @@ const PaperPreview = () => {
         setCurrentMarkdownType('origin');
         setBaseFileName('');
         setAgentState(null);
+        setChat([]);
+        setSessionId(null);
+        setChatSessions([]);
+        setRestoredSessionId(null);
+        setIsNewSession(false);
 
         const dirName = selectedDirectory;
 
@@ -538,6 +720,7 @@ const PaperPreview = () => {
 
         await fetchMarkdownContent(dirName, baseFileName, 'origin');
         await fetchAgentState(dirName);
+        await fetchChatSessions(dirName);
       } catch (error) {
         console.error('Error processing directory:', error);
         alert('処理中にエラーが発生しました: ' + error.message);
@@ -564,6 +747,11 @@ const PaperPreview = () => {
     setIsModified(false);
     setActiveTab('preview');
     setAgentState(null);
+    setChat([]);
+    setSessionId(null);
+    setChatSessions([]);
+    setRestoredSessionId(null);
+    setIsNewSession(false);
   };
 
   const handleRequestDeleteDirectory = (dirName) => {
@@ -605,6 +793,10 @@ const PaperPreview = () => {
         setContent('');
         setAgentState(null);
         setChat([]);
+        setSessionId(null);
+        setChatSessions([]);
+        setRestoredSessionId(null);
+        setIsNewSession(false);
       }
     } catch (error) {
       console.error('Error deleting directory:', error);
@@ -695,7 +887,7 @@ const PaperPreview = () => {
         }
       }
 
-      // バッファに残った未処理データがあれば処理
+      // バッファ残りを処理
       if (buffer && buffer.startsWith('data:')) {
         const dataContent = buffer.slice('data: '.length);
         try {
@@ -884,6 +1076,15 @@ const PaperPreview = () => {
     }
   };
 
+  // セレクトでセッションを選択したとき（チャット復元）
+  const handleSelectSession = async (selectedSessionId) => {
+    setChat([]);
+    setSessionId(null);
+    setRestoredSessionId(selectedSessionId);
+    setIsNewSession(false);
+    await fetchChatHistory(selectedSessionId);
+  };
+
   return (
     <div
       className={`min-h-screen bg-gray-100 transition-transform duration-300 ${
@@ -911,6 +1112,10 @@ const PaperPreview = () => {
           setActiveTab('preview');
           setAgentState(null);
           setChat([]);
+          setSessionId(null);
+          setChatSessions([]);
+          setRestoredSessionId(null);
+          setIsNewSession(false);
         }}
         onMenuClick={toggleSidebar}
         sidebarOpen={sidebarOpen}
@@ -1091,10 +1296,51 @@ const PaperPreview = () => {
 
           {/* 右ペイン（チャットエリア） */}
           <div className="flex flex-col">
-            <div className="pb-3 flex justify-end items-center">
-              <Button variant="outline" size="sm" onClick={handleChatReset}>
-                リセット
-              </Button>
+            <div className="pb-[10px] flex justify-between items-center">
+              {/* チャットセッション一覧セレクト */}
+              <Select
+                onValueChange={(val) => handleSelectSession(val)}
+                // 復元中のセッションがあればそのIDを表示。なければ '' を表示
+                value={restoredSessionId ? String(restoredSessionId) : ''}
+              >
+                <SelectTrigger className="w-2/3 bg-white font-bold">
+                    {restoredSessionId ? (
+                      <SelectValue>
+                        {
+                          chatSessions.find(
+                            (s) => s.id === Number(restoredSessionId)
+                          )?.created_at || "チャット履歴なし"
+                        }
+                      </SelectValue>
+                    ) : (
+                      <SelectValue
+                        placeholder={
+                          chatSessions.length > 0
+                            ? "チャット履歴を選択"
+                            : "チャット履歴なし"
+                        }
+                      />
+                    )}
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectGroup>
+                    {chatSessions.map((session) => (
+                      <SelectItem
+                        key={session.id}
+                        value={String(session.id)}
+                      >
+                        {/* IDは表示せず created_at（または置き換え後の文字列）を表示 */}
+                        {session.created_at}
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
+              <div>
+                <Button variant="outline" size="sm" onClick={handleChatReset}>
+                  リセット
+                </Button>
+              </div>
             </div>
 
             <Card className="h-[calc(100%-2.6rem)] flex flex-col">
@@ -1165,16 +1411,14 @@ const PaperPreview = () => {
                     className="resize-none"
                     rows={3}
                     onKeyDown={(e) => {
-
-                        // IME変換中（isComposing = true）の場合はEnterでも送信しない
-                        if (e.nativeEvent.isComposing) {
-                            return;
-                        }
-
-                        if (e.key === 'Enter' && !e.shiftKey) {
-                            e.preventDefault();
-                            handleSend();
-                        }
+                      // IME変換中（isComposing = true）の場合はEnter送信しない
+                      if (e.nativeEvent.isComposing) {
+                        return;
+                      }
+                      if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        handleSend();
+                      }
                     }}
                   />
 
