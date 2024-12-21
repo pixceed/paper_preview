@@ -32,6 +32,7 @@ RUN apt-get install -y python-is-python3
 # RUN apt-get install -y libgl1-mesa-dev
 # RUN apt-get install -y libglib2.0
 RUN apt-get install -y libopencv-dev
+RUN apt-get install -y libreoffice
 
 ## 権限定義 ##
 ARG user_name=ubuntu

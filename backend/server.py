@@ -1,3 +1,4 @@
+import argparse
 import glob
 import os
 import json
@@ -12,7 +13,8 @@ from dotenv import load_dotenv
 
 import sqlite3
 
-from langchain_openai import ChatOpenAI
+# ChatOpenAI と AzureChatOpenAI
+from langchain_openai import ChatOpenAI, AzureChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage
 from langchain_community.callbacks.manager import get_openai_callback
 
@@ -36,16 +38,16 @@ load_dotenv()
 app = Flask(__name__)
 CORS(app)
 
-# コンテンツ格納ディレクトリ
+# --- ここで Flask のグローバルな config に CHAT_MODEL 用のキーを用意しておく ---
+app.config["CHAT_MODEL"] = None
+
 CONTENT_DATA_DIR = "/home/ubuntu/workspace/contents"
 os.makedirs(CONTENT_DATA_DIR, exist_ok=True)
 
-# SQLite初期化
 DB_PATH = os.path.join(CONTENT_DATA_DIR, 'chat_history.db')
 conn = sqlite3.connect(DB_PATH, check_same_thread=False)
 cursor = conn.cursor()
 
-# セッションテーブル
 cursor.execute('''
 CREATE TABLE IF NOT EXISTS chat_sessions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -54,7 +56,6 @@ CREATE TABLE IF NOT EXISTS chat_sessions (
 )
 ''')
 
-# メッセージテーブル
 cursor.execute('''
 CREATE TABLE IF NOT EXISTS chat_messages (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -66,7 +67,6 @@ CREATE TABLE IF NOT EXISTS chat_messages (
 )
 ''')
 conn.commit()
-
 
 def remove_oldest_session_if_needed(dir_name):
     """
@@ -83,7 +83,6 @@ def remove_oldest_session_if_needed(dir_name):
         cursor.execute('DELETE FROM chat_messages WHERE session_id = ?', (oldest_id,))
         cursor.execute('DELETE FROM chat_sessions WHERE id = ?', (oldest_id,))
         conn.commit()
-
 
 @app.route('/create_chat_session', methods=['POST'])
 def create_chat_session():
@@ -107,7 +106,6 @@ def create_chat_session():
     conn.commit()
 
     return jsonify({'session_id': new_session_id}), 200
-
 
 @app.route('/list_chat_sessions', methods=['GET'])
 def list_chat_sessions():
@@ -138,13 +136,10 @@ def list_chat_sessions():
 
     return jsonify({'sessions': sessions}), 200
 
-
 @app.route('/get_chat_history', methods=['GET'])
 def get_chat_history():
     """
     セッションIDを指定し、DBに保存されたメッセージを取得。
-    content が JSON配列の場合: [{"type": "text", "text": ...}, {"type": "image_url", ...}]
-    として複数メッセージに展開。そうでなければ1つのテキストメッセージとして扱う。
     """
     session_id = request.args.get('session_id', None)
     if not session_id:
@@ -194,7 +189,6 @@ def get_chat_history():
 
     return jsonify({'messages': all_messages}), 200
 
-
 @app.route('/delete_chat_session', methods=['POST'])
 def delete_chat_session():
     data = request.get_json()
@@ -207,7 +201,6 @@ def delete_chat_session():
     conn.commit()
 
     return jsonify({'message': f'Session {session_id} deleted.'}), 200
-
 
 @app.route('/bulk_save_chat', methods=['POST'])
 def bulk_save_chat():
@@ -235,7 +228,6 @@ def bulk_save_chat():
 
     return jsonify({'message': 'Bulk save complete'}), 200
 
-
 def save_chat_message(session_id, role, content):
     """
     1件のメッセージをDBに保存。
@@ -246,7 +238,6 @@ def save_chat_message(session_id, role, content):
         VALUES (?, ?, ?)
     ''', (session_id, role, content))
     conn.commit()
-
 
 @app.route('/contents/<path:filename>', methods=['GET'])
 def serve_content_files(filename):
@@ -260,7 +251,6 @@ def serve_content_files(filename):
         return send_from_directory(CONTENT_DATA_DIR, filename)
     except FileNotFoundError:
         return jsonify({'error': 'File not found'}), 404
-
 
 @app.route('/list_files/<path:dir_name>', methods=['GET'])
 def list_files(dir_name):
@@ -284,7 +274,6 @@ def list_files(dir_name):
         }), 200
     except Exception as e:
         return jsonify({'error': str(e)}), 500
-
 
 @app.route('/list_contents', methods=['GET'])
 def list_contents():
@@ -314,7 +303,6 @@ def list_contents():
         return jsonify({'directories': directories}), 200
     except Exception as e:
         return jsonify({'error': str(e)}), 500
-
 
 @app.route('/pdf2markdown', methods=['POST'])
 def pdf2markdown():
@@ -363,7 +351,6 @@ def pdf2markdown():
             return
 
     return Response(generate(), mimetype='text/event-stream')
-
 
 def extract_text_from_pdf(pdf_stream, file_name):
     """
@@ -425,27 +412,37 @@ def extract_text_from_pdf(pdf_stream, file_name):
     yield json.dumps({"llm_output": "$=~=$start$=~=$"})
     result_text = ""
 
-    # GPT (gpt-4o-mini)を使ってマークダウンに図表リンクを追記させる
-    chat_model = ChatOpenAI(model="gpt-4o-mini", temperature=0, streaming=True)
-    system_prompt = SystemMessage(
-        content=
-"""
-与えられたマークダウン文章に以下の処理を行い、追記後のマークダウン文章を出力してください。
+    with get_openai_callback() as cb:
 
-・文章中における図の部分に、`![Local Image](picture-$.png)\n`($は図番号)を追記してください。
-・文章中における表の部分に、`![Local Image](table-$.png)\n`($は表番号)を追記してください。
+        # Flask の config からチャットモデルを取得
+        chat_model = app.config["CHAT_MODEL"]
+        chat_model.temperature = 0
+        chat_model.streaming = True
 
-出力は、必ずマークダウン文章のみで、余計な文章は含めないでください。
-"""
-    )
-    image_message = HumanMessage(content=md_text)
-    messages = [system_prompt, image_message]
+        system_prompt = SystemMessage(
+            content=
+    """
+    与えられたマークダウン文章に以下の処理を行い、追記後のマークダウン文章を出力してください。
 
-    for result in chat_model.stream(messages):
-        result_text += result.content
-        if result == '':
-            continue
-        yield json.dumps({"llm_output": result.content})
+    ・文章中における図の部分に、`![Local Image](picture-$.png)\n`($は図番号)を追記してください。
+    ・文章中における表の部分に、`![Local Image](table-$.png)\n`($は表番号)を追記してください。
+
+    出力は、必ずマークダウン文章のみで、余計な文章は含めないでください。
+    """
+        )
+        image_message = HumanMessage(content=md_text)
+        messages = [system_prompt, image_message]
+
+        for result in chat_model.stream(messages):
+            result_text += result.content
+            if result == '':
+                continue
+            yield json.dumps({"llm_output": result.content})
+
+        print(f"\nTotal Tokens: {cb.total_tokens}")
+        print(f"Prompt Tokens: {cb.prompt_tokens}")
+        print(f"Completion Tokens: {cb.completion_tokens}")
+        print(f"Total Cost (USD): ${cb.total_cost}\n")
 
     result_text = result_text.replace("```markdown", "").replace("```", "")
 
@@ -455,7 +452,6 @@ def extract_text_from_pdf(pdf_stream, file_name):
 
     yield json.dumps({"llm_output": "$=~=$end$=~=$"})
     yield json.dumps({"dir_name": dir_name, "base_file_name": base_name})
-
 
 @app.route('/trans_markdown', methods=['POST'])
 def trans_markdown():
@@ -495,7 +491,10 @@ def trans_markdown():
             result_text = ""
 
             with get_openai_callback() as cb:
-                chat_model = ChatOpenAI(model="gpt-4o-mini", temperature=0, streaming=True)
+                chat_model = app.config["CHAT_MODEL"]
+                chat_model.temperature = 0
+                chat_model.streaming = True
+
                 system_prompt = SystemMessage(
                     content=
 """
@@ -515,7 +514,11 @@ def trans_markdown():
                         continue
                     yield f'data: {json.dumps({"llm_output": result.content})}\n\n'
 
-            
+                print(f"\nTotal Tokens: {cb.total_tokens}")
+                print(f"Prompt Tokens: {cb.prompt_tokens}")
+                print(f"Completion Tokens: {cb.completion_tokens}")
+                print(f"Total Cost (USD): ${cb.total_cost}\n")
+
             ja_md_filename = os.path.join(dir_path, f"{base_name}_trans.md")
             with open(ja_md_filename, mode="w", encoding="utf-8") as f:
                 f.write(result_text)
@@ -529,7 +532,6 @@ def trans_markdown():
             return
 
     return Response(generate(), mimetype='text/event-stream')
-
 
 @app.route('/save_markdown', methods=['POST'])
 def save_markdown():
@@ -568,7 +570,6 @@ def save_markdown():
         print(error_traceback)
         return jsonify({'error': f'Error saving file: {str(e)}'}), 500
 
-
 @app.route('/delete_directory', methods=['POST'])
 def delete_directory():
     """
@@ -594,7 +595,6 @@ def delete_directory():
         error_traceback = traceback.format_exc()
         print(error_traceback)
         return jsonify({'error': f'Error deleting directory: {str(e)}'}), 500
-
 
 @app.route('/initialize_state', methods=['GET'])
 def initialize_state():
@@ -674,26 +674,35 @@ def initialize_state():
 
     return jsonify(state)
 
-
 class State(TypedDict):
     messages: Annotated[list, add_messages]
 
-
 def initialize_agent():
     """
-    langgraphでStateGraphを構築し、ChatOpenAIモデルと結びつける。
+    langgraphでStateGraphを構築し、Flask の config["CHAT_MODEL"] を使う。
     """
     graph_builder = StateGraph(State)
-    chat_model = ChatOpenAI(model="gpt-4o-mini", temperature=1)
 
     def chatbot(state: State):
-        return {"messages": [chat_model.invoke(state["messages"])]}
+        with get_openai_callback() as cb:
+            chat_model = app.config["CHAT_MODEL"]
+            chat_model.temperature = 1
+            chat_model.streaming = False
+
+            # invokeで実行した結果メッセージを返す
+            answer = {"messages": [chat_model.invoke(state["messages"])]}
+
+            print(f"\nTotal Tokens: {cb.total_tokens}")
+            print(f"Prompt Tokens: {cb.prompt_tokens}")
+            print(f"Completion Tokens: {cb.completion_tokens}")
+            print(f"Total Cost (USD): ${cb.total_cost}\n")
+
+            return answer
 
     graph_builder.add_node("chatbot", chatbot)
     graph_builder.set_entry_point("chatbot")
     agent = graph_builder.compile()
     return agent
-
 
 @app.route('/scholar_agent', methods=['POST'])
 def scholar_agent():
@@ -723,10 +732,10 @@ def scholar_agent():
         # 1) DBに保存（そのまま JSON文字列）
         save_chat_message(session_id, 'user', user_input)
 
-        # 2) LLMに入力するため、 user_input(JSON)をパースして文字列を構築
+        # 2) LLMに入力するため user_input(JSON)を文字列化
         user_str_for_llm = ""
         try:
-            parsed_list = json.loads(user_input)  # [ {type:..., text:...}, ... ]
+            parsed_list = json.loads(user_input)
             if isinstance(parsed_list, list):
                 for item in parsed_list:
                     if item.get("type") == "text":
@@ -734,10 +743,8 @@ def scholar_agent():
                     elif item.get("type") == "image_url":
                         user_str_for_llm += f"ユーザーは画像をアップロードしました: {item['image_url']['url']}\n"
             else:
-                # 配列でない場合
                 user_str_for_llm += f"ユーザーのメッセージ(配列でない): {json.dumps(parsed_list, ensure_ascii=False)}\n"
         except:
-            # JSONでなければそのまま
             user_str_for_llm = f"ユーザーのメッセージ: {user_input}"
 
         # 3) ステートにユーザーメッセージを追加
@@ -771,6 +778,23 @@ def scholar_agent():
         print(traceback_str)
         return jsonify({"error": f"内部エラーが発生しました: {str(e)}"}), 500
 
-
 if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--aoai', action='store_true', help="Use AzureOpenAI instead of ChatOpenAI")
+    args = parser.parse_args()
+
+    if args.aoai:
+        app.config["CHAT_MODEL"] = AzureChatOpenAI(
+            openai_api_versions=os.getenv("AZURE_OPENAI_API_VERSION"),
+            azure_deployment=os.getenv("AZURE_CHAT_DEPLOYMENT"),
+            temperature=0
+        )
+        print(">>> AzureOpenAI を使用します。")
+    else:
+        app.config["CHAT_MODEL"] = ChatOpenAI(
+            model="gpt-4o-mini",
+            temperature=1
+        )
+        print(">>> ChatOpenAI を使用します。")
+
     app.run(host='0.0.0.0', port=5601, debug=True)

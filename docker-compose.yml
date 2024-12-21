@@ -25,7 +25,7 @@ services:
     stdin_open: true
     tty: true
 
-#     command: sh -c "npm install && npm run dev"
+    # command: sh -c "npm install && npm run dev"
 
   backend_flask:
     build:
@@ -55,6 +55,6 @@ services:
     shm_size: '2gb'
     stdin_open: true
     tty: true
-    # command: bash
+
     # command: sh -c "python server.py"
 

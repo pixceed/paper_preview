@@ -1,2 +1,4 @@
-# React-Flask テンプレート
+# Survey Copilot
+
+## 環境構築
 
