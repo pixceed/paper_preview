@@ -944,10 +944,10 @@ const PaperPreview = () => {
             setProcessingStatus(data.status);
           }
           if (data.llm_output) {
-            if (data.llm_output === 'start') {
+            if (data.llm_output === '$=~=$start$=~=$') {
               inLLMOutput = true;
               setContent('');
-            } else if (data.llm_output === 'end') {
+            } else if (data.llm_output === '$=~=$end$=~=$') {
               inLLMOutput = false;
               setIsAppending(false);
               setMarkdownLoading(false);
