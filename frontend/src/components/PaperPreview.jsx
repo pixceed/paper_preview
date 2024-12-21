@@ -54,6 +54,7 @@ const PaperPreview = () => {
   const [content, setContent] = useState('');
   const [message, setMessage] = useState('');
   const [chat, setChat] = useState([]);
+  // 画像を一時的に保管するステート
   const [pendingImages, setPendingImages] = useState([]);
 
   const [pdfToDisplay, setPdfToDisplay] = useState(null);
@@ -85,11 +86,9 @@ const PaperPreview = () => {
   const [isAssistantTyping, setIsAssistantTyping] = useState(false);
 
   // セッション管理用
-  const [sessionId, setSessionId] = useState(null);             // 現在のセッションID（チャットを保存するID）
-  const [chatSessions, setChatSessions] = useState([]);          // 該当dir_nameのセッション一覧
+  const [sessionId, setSessionId] = useState(null);             
+  const [chatSessions, setChatSessions] = useState([]);          
   const [restoredSessionId, setRestoredSessionId] = useState(null); 
-
-  // フロント側で新規セッション判定を行うため、送信時にフラグを仕込む
   const [isNewSession, setIsNewSession] = useState(false);
 
   const updateContainerWidth = () => {
@@ -156,7 +155,6 @@ const PaperPreview = () => {
         throw new Error(errorData.error || 'チャット履歴の取得に失敗しました');
       }
       const data = await res.json();
-      // フロントのチャットにも反映
       setChat(data.messages);
     } catch (error) {
       console.error('Error fetching chat history:', error);
@@ -250,13 +248,10 @@ const PaperPreview = () => {
       alert('ディレクトリが選択されていません');
       return;
     }
-    // 単にフロント側をリセット
     setChat([]);
     setSessionId(null);
     setRestoredSessionId(null);
     setIsNewSession(false);
-    console.log('Chat has been reset in the frontend.');
-    // エージェント状態初期化
     await fetchAgentState(selectedDirectory);
   };
 
@@ -283,13 +278,37 @@ const PaperPreview = () => {
     }
   };
 
-  // メッセージ送信時の処理
+  // ---------------------------------------------
+  // Base64変換してLLMに投げるための関数
+  // ---------------------------------------------
+  const convertImageToBase64 = (fileUrl) => {
+    return new Promise((resolve, reject) => {
+      // fetch(blob)
+      fetch(fileUrl)
+        .then((res) => res.blob())
+        .then((blob) => {
+          const reader = new FileReader();
+          reader.onloadend = () => {
+            // "data:image/png;base64,xxx" という文字列が reader.result に入る
+            resolve(reader.result);
+          };
+          reader.onerror = (err) => {
+            reject(err);
+          };
+          reader.readAsDataURL(blob);
+        })
+        .catch((err) => reject(err));
+    });
+  };
+
+  // ---------------------------------------------
+  // メッセージ送信(画像はサーバーに保存せず、Base64をLLMに送る)
+  // ---------------------------------------------
   const handleSend = async () => {
-    // メッセージが空 & 画像アップロードなし の場合は何もしない
     if (!message.trim() && pendingImages.length === 0) {
+      // 何も送るものがない場合
       return;
     }
-    // ディレクトリが選択されていなければエラー
     if (!selectedDirectory) {
       alert('ディレクトリが選択されていません');
       return;
@@ -299,8 +318,8 @@ const PaperPreview = () => {
       return;
     }
 
-    // 送信したタイミングでメッセージ入力欄をクリア
     const currentMessage = message.trim();
+    // 送信したタイミングでメッセージ入力欄をクリア
     setMessage('');
 
     try {
@@ -329,58 +348,100 @@ const PaperPreview = () => {
         setIsNewSession(true);
       }
 
-      // ユーザーメッセージを画面に追加
-      setChat((prevChat) => [
-        ...prevChat,
-        { role: 'user', type: 'text', content: currentMessage },
-      ]);
-
-      // agentState 側にもユーザーメッセージを追加
-      const newAgentState = { ...agentState };
-      newAgentState.messages.push({ role: 'user', content: currentMessage });
-
-      // scholar_agent へ問い合わせ
-      const response = await fetch(`http://${import.meta.env.VITE_APP_IP}:5601/scholar_agent`, {
-        method: 'POST',
-        mode: 'cors',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          state: newAgentState,
-          user_input: currentMessage,
-          session_id: finalSessionId,
-        }),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'エージェントからの応答取得に失敗しました');
-      }
-
-      const data = await response.json();
-      setAgentState(data.state);
-
-      const assistantMessage = data.state.messages[data.state.messages.length - 1];
-
-      // アシスタントメッセージを画面に追加
-      setChat((prevChat) => [
-        ...prevChat,
-        {
-          role: assistantMessage.role,
+      // 1) まずフロントのチャット欄にユーザーの内容を反映
+      // 「テキスト」「画像」それぞれ複数メッセージに分けて表示。
+      const newChatMessages = [];
+      if (currentMessage) {
+        newChatMessages.push({
+          role: 'user',
           type: 'text',
-          content: assistantMessage.content,
-        },
-      ]);
+          content: currentMessage,
+        });
+      }
+      // pendingImagesを全部読み込む
+      for (let i = 0; i < pendingImages.length; i++) {
+        newChatMessages.push({
+          role: 'user',
+          type: 'image',
+          content: pendingImages[i],
+        });
+      }
+      // フロント表示に追加
+      setChat((prev) => [...prev, ...newChatMessages]);
 
-      // 画像は今回未送信なので、ここでは pendingImages をクリア
+      // 2) 画像をbase64にして + テキストをまとめ、LLMへ送るための配列にする
+      const contentArray = [];
+      if (currentMessage) {
+        contentArray.push({
+          type: "text",
+          text: currentMessage,
+        });
+      }
+      for (let i = 0; i < pendingImages.length; i++) {
+        const base64Data = await convertImageToBase64(pendingImages[i]);
+        // base64Data は "data:image/png;base64,..." の形
+        contentArray.push({
+          type: "image_url",
+          image_url: {
+            url: base64Data,
+          },
+        });
+      }
+      // pendingImagesをクリア
       setPendingImages([]);
 
-      // 新規セッションのとき、最初のメッセージが返ってきた後にタイトルを「タイムスタンプ」に書き換える
-      if (sessionWasNewlyCreated) {
-        // 送信後にセッション一覧を取得
-        await fetchChatSessions(selectedDirectory);
-        setRestoredSessionId(finalSessionId);
+      // 3) scholar_agent に問い合わせ ( user_input は JSON文字列にする )
+      if (contentArray.length > 0) {
+        const newAgentState = { ...agentState };
+
+        // DB用に、ユーザーメッセージは JSON文字列として保存する
+        const userContentJson = JSON.stringify(contentArray);
+
+        // scholar_agent へ問い合わせ
+        const response = await fetch(`http://${import.meta.env.VITE_APP_IP}:5601/scholar_agent`, {
+          method: 'POST',
+          mode: 'cors',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            state: newAgentState,
+            user_input: userContentJson,  // JSON文字列を渡す
+            session_id: finalSessionId,
+          }),
+        });
+
+        if (!response.ok) {
+          const errorData = await response.json();
+          throw new Error(errorData.error || 'エージェントからの応答取得に失敗しました');
+        }
+
+        const data = await response.json();
+        setAgentState(data.state);
+
+        // アシスタントメッセージ(テキスト)を画面に追加
+        const assistantMessage = data.state.messages[data.state.messages.length - 1];
+        setChat((prevChat) => [
+          ...prevChat,
+          {
+            role: assistantMessage.role,
+            type: 'text',
+            content: assistantMessage.content,
+          },
+        ]);
+
+        // 新規セッションなら、最初の応答時にセッション一覧を更新
+        if (sessionWasNewlyCreated) {
+          await fetchChatSessions(selectedDirectory);
+          setRestoredSessionId(finalSessionId);
+        }
+      } else {
+        // もし送るものが無ければ何もしないが、
+        // 新規セッションだけは一覧に反映させる
+        if (sessionWasNewlyCreated) {
+          await fetchChatSessions(selectedDirectory);
+          setRestoredSessionId(finalSessionId);
+        }
       }
 
     } catch (error) {
@@ -389,23 +450,22 @@ const PaperPreview = () => {
     } finally {
       setChatLoading(false);
       setIsAssistantTyping(false);
-      // 追加のセッション一覧リロード
+      // 再度セッション一覧をロード
       await fetchChatSessions(selectedDirectory);
     }
   };
 
+  // 画像アップロード前の一時プレビュー用イベントハンドラ群
   const handleImageUpload = (e) => {
     const files = e.target.files;
     if (files) {
-      const newImages = Array.from(files).map((file) =>
-        URL.createObjectURL(file)
-      );
+      const newImages = Array.from(files).map((file) => URL.createObjectURL(file));
       setPendingImages([...pendingImages, ...newImages]);
     }
   };
 
   const handleRemoveImage = (index) => {
-    setPendingImages(pendingImages.filter((_, i) => i !== index));
+    setPendingImages((prev) => prev.filter((_, i) => i !== index));
   };
 
   const handlePaste = (e) => {
@@ -428,7 +488,6 @@ const PaperPreview = () => {
   function onDocumentLoadSuccess({ numPages }) {
     setNumPages(numPages);
     updateContainerWidth();
-    console.log(`Loaded PDF with ${numPages} pages.`);
   }
 
   const handleZoomIn = () => {
@@ -492,7 +551,6 @@ const PaperPreview = () => {
           }
 
           const response = await fetch(url, options);
-
           if (!response.ok) {
             const errorData = await response.json();
             throw new Error(errorData.error || 'PDFの処理に失敗しました');
@@ -602,7 +660,6 @@ const PaperPreview = () => {
           const transMarkdownFile = markdownFiles.find((name) =>
             name.endsWith('_trans.md')
           );
-
           if (transMarkdownFile) {
             setShowJapaneseButton(true);
             setShowTranslateButton(false);
@@ -612,8 +669,6 @@ const PaperPreview = () => {
           }
 
           await fetchAgentState(dirName);
-          // チャットはまだ行われていないのでセッション作成しない
-          // セッション一覧を取得
           await fetchChatSessions(dirName);
 
         } catch (error) {
@@ -634,7 +689,6 @@ const PaperPreview = () => {
   useEffect(() => {
     const processDirectory = async () => {
       if (!selectedDirectory) return;
-
       try {
         setLoading(true);
         setMarkdownLoading(true);
@@ -664,7 +718,6 @@ const PaperPreview = () => {
             mode: 'cors',
           }
         );
-
         if (!filesResponse || !filesResponse.ok) {
           const errorData = filesResponse ? await filesResponse.json() : {};
           throw new Error(
@@ -681,7 +734,6 @@ const PaperPreview = () => {
             '指定されたディレクトリ内にマークダウンファイルが存在しません'
           );
         }
-
         if (!pdfFileName) {
           throw new Error(
             '指定されたディレクトリ内にPDFファイルが存在しません'
@@ -691,7 +743,6 @@ const PaperPreview = () => {
         const originMarkdownFile = markdownFiles.find((name) =>
           name.endsWith('_origin.md')
         );
-
         if (!originMarkdownFile) {
           throw new Error(
             '指定されたディレクトリ内に_origin.mdファイルが存在しません'
@@ -704,7 +755,6 @@ const PaperPreview = () => {
         const transMarkdownFile = markdownFiles.find((name) =>
           name.endsWith('_trans.md')
         );
-
         if (transMarkdownFile) {
           setShowJapaneseButton(true);
           setShowTranslateButton(false);
@@ -729,7 +779,6 @@ const PaperPreview = () => {
         setLoading(false);
       }
     };
-
     processDirectory();
   }, [selectedDirectory]);
 
@@ -779,14 +828,12 @@ const PaperPreview = () => {
         },
         body: JSON.stringify({ dir_name: dirName }),
       });
-
       if (!response.ok) {
         const errorData = await response.json();
         throw new Error(errorData.error || 'ディレクトリの削除に失敗しました');
       }
 
       await fetchDirectories();
-
       if (selectedDirectory === dirName) {
         setSelectedDirectory(null);
         setPdfToDisplay(null);
@@ -809,7 +856,6 @@ const PaperPreview = () => {
       alert('ディレクトリまたはファイル名が不明です');
       return;
     }
-
     try {
       setMarkdownLoading(true);
       setProcessingStatus('翻訳中...');
@@ -827,7 +873,6 @@ const PaperPreview = () => {
       };
 
       const response = await fetch(url, options);
-
       if (!response.ok) {
         const errorData = await response.json();
         throw new Error(errorData.error || '翻訳の処理に失敗しました');
@@ -842,7 +887,6 @@ const PaperPreview = () => {
       while (true) {
         const { value, done } = await reader.read();
         if (done) break;
-
         const chunk = decoder.decode(value, { stream: true });
         buffer += chunk;
 
@@ -854,15 +898,12 @@ const PaperPreview = () => {
             const dataContent = message.slice('data: '.length);
             try {
               const data = JSON.parse(dataContent);
-
               if (data.error) {
                 throw new Error(data.error);
               }
-
               if (data.status) {
                 setProcessingStatus(data.status);
               }
-
               if (data.llm_output) {
                 if (data.llm_output === 'start') {
                   inLLMOutput = true;
@@ -892,15 +933,12 @@ const PaperPreview = () => {
         const dataContent = buffer.slice('data: '.length);
         try {
           const data = JSON.parse(dataContent);
-
           if (data.error) {
             throw new Error(data.error);
           }
-
           if (data.status) {
             setProcessingStatus(data.status);
           }
-
           if (data.llm_output) {
             if (data.llm_output === 'start') {
               inLLMOutput = true;
@@ -935,7 +973,6 @@ const PaperPreview = () => {
       alert('ディレクトリまたはファイル名が不明です');
       return;
     }
-
     try {
       setMarkdownLoading(true);
       setProcessingStatus('');
@@ -958,7 +995,6 @@ const PaperPreview = () => {
       alert('ディレクトリまたはファイル名が不明です');
       return;
     }
-
     try {
       setMarkdownLoading(true);
       setProcessingStatus('');
@@ -1000,7 +1036,6 @@ const PaperPreview = () => {
       }
 
       let markdownContent = await markdownResponse.text();
-
       markdownContent = markdownContent
         .replace(
           /!\[Local Image\]\(picture-(\d+)\.png\)/g,
@@ -1062,12 +1097,10 @@ const PaperPreview = () => {
       };
 
       const response = await fetch(url, options);
-
       if (!response.ok) {
         const errorData = await response.json();
         throw new Error(errorData.error || '保存に失敗しました');
       }
-
       alert('保存が完了しました');
       setIsModified(false);
     } catch (error) {
@@ -1300,7 +1333,6 @@ const PaperPreview = () => {
               {/* チャットセッション一覧セレクト */}
               <Select
                 onValueChange={(val) => handleSelectSession(val)}
-                // 復元中のセッションがあればそのIDを表示。なければ '' を表示
                 value={restoredSessionId ? String(restoredSessionId) : ''}
               >
                 <SelectTrigger className="w-2/3 bg-white font-bold">
@@ -1329,7 +1361,6 @@ const PaperPreview = () => {
                         key={session.id}
                         value={String(session.id)}
                       >
-                        {/* IDは表示せず created_at（または置き換え後の文字列）を表示 */}
                         {session.created_at}
                       </SelectItem>
                     ))}
@@ -1368,7 +1399,7 @@ const PaperPreview = () => {
                       ) : (
                         <img
                           src={msg.content}
-                          alt="Uploaded"
+                          alt="Image"
                           className="rounded-lg max-w-[80%] border"
                         />
                       )}
@@ -1384,6 +1415,7 @@ const PaperPreview = () => {
               </CardContent>
 
               <div className="p-4 border-t">
+                {/* 送信前の画像プレビュー */}
                 {pendingImages.length > 0 && (
                   <div className="grid grid-cols-3 gap-2 mb-4">
                     {pendingImages.map((image, index) => (
@@ -1411,7 +1443,6 @@ const PaperPreview = () => {
                     className="resize-none"
                     rows={3}
                     onKeyDown={(e) => {
-                      // IME変換中（isComposing = true）の場合はEnter送信しない
                       if (e.nativeEvent.isComposing) {
                         return;
                       }
@@ -1421,7 +1452,6 @@ const PaperPreview = () => {
                       }
                     }}
                   />
-
                   <div className="flex flex-col gap-2">
                     <Button
                       className="self-end"
