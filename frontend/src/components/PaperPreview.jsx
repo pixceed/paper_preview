@@ -491,11 +491,59 @@ const PaperPreview = () => {
   }
 
   const handleZoomIn = () => {
-    setScale((prevScale) => Math.min(prevScale + 0.2, 3.0));
+    if (pdfContainerRef.current) {
+      const container = pdfContainerRef.current;
+      const beforeHeight = container.scrollHeight;
+      const beforeWidth = container.scrollWidth;
+      const beforeScrollTop = container.scrollTop;
+      const beforeScrollLeft = container.scrollLeft;
+      const containerHeight = container.clientHeight;
+      const containerWidth = container.clientWidth;
+      
+      const scrollRatioY = (beforeScrollTop + containerHeight / 2) / beforeHeight;
+      const scrollRatioX = (beforeScrollLeft + containerWidth / 2) / beforeWidth;
+      
+      setScale((prevScale) => {
+        const newScale = Math.min(prevScale + 0.2, 3.0);
+        
+        setTimeout(() => {
+          const afterHeight = container.scrollHeight;
+          const afterWidth = container.scrollWidth;
+          container.scrollTop = scrollRatioY * afterHeight - containerHeight / 2;
+          container.scrollLeft = scrollRatioX * afterWidth - containerWidth / 2;
+        }, 0);
+        
+        return newScale;
+      });
+    }
   };
 
   const handleZoomOut = () => {
-    setScale((prevScale) => Math.max(prevScale - 0.2, 0.5));
+    if (pdfContainerRef.current) {
+      const container = pdfContainerRef.current;
+      const beforeHeight = container.scrollHeight;
+      const beforeWidth = container.scrollWidth;
+      const beforeScrollTop = container.scrollTop;
+      const beforeScrollLeft = container.scrollLeft;
+      const containerHeight = container.clientHeight;
+      const containerWidth = container.clientWidth;
+      
+      const scrollRatioY = (beforeScrollTop + containerHeight / 2) / beforeHeight;
+      const scrollRatioX = (beforeScrollLeft + containerWidth / 2) / beforeWidth;
+      
+      setScale((prevScale) => {
+        const newScale = Math.max(prevScale - 0.2, 0.5);
+        
+        setTimeout(() => {
+          const afterHeight = container.scrollHeight;
+          const afterWidth = container.scrollWidth;
+          container.scrollTop = scrollRatioY * afterHeight - containerHeight / 2;
+          container.scrollLeft = scrollRatioX * afterWidth - containerWidth / 2;
+        }, 0);
+        
+        return newScale;
+      });
+    }
   };
 
   useEffect(() => {
@@ -1178,7 +1226,7 @@ const PaperPreview = () => {
                   </Button>
                 </div>
                 <div
-                  className="rounded-lg h-full overflow-auto border"
+                  className="rounded-lg h-full overflow-auto border pdf-container"
                   ref={pdfContainerRef}
                 >
                   <Document
