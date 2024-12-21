@@ -1,7 +1,7 @@
 // src/components/Sidebar.jsx
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Menu, MoreHorizontal } from 'lucide-react';
+import { Menu, MoreHorizontal, Download } from 'lucide-react';
 
 const Sidebar = ({
   isOpen,
@@ -42,6 +42,44 @@ const Sidebar = ({
     setPopupDir(dirName);
   };
 
+  const handleDownload = async (dirName) => {
+    try {
+      const response = await fetch(
+        `http://${import.meta.env.VITE_APP_IP}:5601/download_directory?dir_name=${encodeURIComponent(dirName)}`,
+        {
+          method: 'GET',
+          mode: 'cors',
+        }
+      );
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'ダウンロードに失敗しました');
+      }
+
+      // レスポンスをBlobとして取得
+      const blob = await response.blob();
+      
+      // ダウンロードリンクを作成
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${dirName}.zip`;
+      
+      // リンクをクリックしてダウンロード開始
+      document.body.appendChild(a);
+      a.click();
+      
+      // 後処理
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+      setPopupDir(null);
+    } catch (error) {
+      console.error('Error downloading directory:', error);
+      alert('ダウンロード中にエラーが発生しました: ' + error.message);
+    }
+  };
+
   return (
     <div
       className={`fixed top-0 left-0 h-full bg-gray-800 text-white transform ${
@@ -66,7 +104,7 @@ const Sidebar = ({
                     ? 'bg-gray-600'
                     : 'hover:bg-gray-700'
                 }`}
-                style={{ maxWidth: '200px' }} // 最大幅を指定
+                style={{ maxWidth: '220px' }} // 最大幅を指定
               >
                 <button
                   key={dir.dir_name}
@@ -102,6 +140,13 @@ const Sidebar = ({
             zIndex: 1100,
           }}
         >
+          <button
+            onClick={() => handleDownload(popupDir)}
+            className="w-full px-4 py-2 text-white hover:bg-gray-600 hover:rounded text-left flex items-center"
+          >
+            <Download className="h-4 w-4 mr-2" />
+            保存
+          </button>
           <button
             onClick={() => {
               onRequestDeleteDirectory(popupDir);

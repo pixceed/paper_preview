@@ -3,13 +3,14 @@ import glob
 import os
 import json
 import time
-from flask import Flask, request, jsonify, send_from_directory, Response, stream_with_context
+from flask import Flask, request, jsonify, send_from_directory, Response, stream_with_context, send_file
 from flask_cors import CORS
 import requests
 from io import BytesIO
 import traceback
 from datetime import datetime
 from dotenv import load_dotenv
+import zipfile
 
 import sqlite3
 
@@ -427,7 +428,7 @@ def extract_text_from_pdf(pdf_stream, file_name):
     ・文章中における図の部分に、`![Local Image](picture-$.png)\n`($は図番号)を追記してください。
     ・文章中における表の部分に、`![Local Image](table-$.png)\n`($は表番号)を追記してください。
 
-    出力は、必ずマークダウン文章のみで、余計な文章は含めないでください。
+    出力は、必��マークダウン文章のみで、余計な文章は含めないでください。
     """
         )
         image_message = HumanMessage(content=md_text)
@@ -763,7 +764,7 @@ def scholar_agent():
                     response = value["messages"][-1].content
                     state["messages"].append({"role": "assistant", "content": response})
 
-        # 5) アシスタント応答をDBに保存
+        # 5) アシスタント応���をDBに保存
         save_chat_message(session_id, 'assistant', response)
 
         response_data = {
@@ -777,6 +778,44 @@ def scholar_agent():
         traceback_str = traceback.format_exc()
         print(traceback_str)
         return jsonify({"error": f"内部エラーが発生しました: {str(e)}"}), 500
+
+@app.route('/download_directory', methods=['GET'])
+def download_directory():
+    """
+    指定ディレクトリをzipファイルとしてダウンロード
+    """
+    try:
+        dir_name = request.args.get('dir_name')
+        if not dir_name:
+            return jsonify({'error': 'dir_name is required.'}), 400
+
+        if '..' in dir_name or '/' in dir_name or '\\' in dir_name:
+            return jsonify({'error': 'Invalid directory name.'}), 400
+
+        target_dir = os.path.join(CONTENT_DATA_DIR, dir_name)
+        if not os.path.isdir(target_dir):
+            return jsonify({'error': 'Directory not found.'}), 404
+
+        memory_file = BytesIO()
+        with zipfile.ZipFile(memory_file, 'w', zipfile.ZIP_DEFLATED) as zf:
+            for root, _, files in os.walk(target_dir):
+                for file in files:
+                    file_path = os.path.join(root, file)
+                    arcname = os.path.relpath(file_path, target_dir)
+                    zf.write(file_path, arcname)
+
+        memory_file.seek(0)
+        return send_file(
+            memory_file,
+            mimetype='application/zip',
+            as_attachment=True,
+            download_name=f'{dir_name}.zip'
+        )
+
+    except Exception as e:
+        error_traceback = traceback.format_exc()
+        print(error_traceback)
+        return jsonify({'error': f'Error creating zip file: {str(e)}'}), 500
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
