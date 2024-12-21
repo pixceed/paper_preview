@@ -55,8 +55,9 @@ const Header = ({ onPdfSelect, onMenuClick, sidebarOpen }) => {
               <div className="flex-1">
                 <TabsContent value="file" className="mt-0">
                   <div className="flex items-center gap-2">
+                    {/* 長いファイル名が枠からはみ出ないように修正 */}
                     <div
-                      className="w-[280px] h-9 rounded-md border border-input bg-background px-3 py-1 text-sm cursor-pointer flex items-center"
+                      className="w-[280px] h-9 rounded-md border border-input bg-background px-3 py-1 text-sm cursor-pointer flex items-center overflow-hidden text-ellipsis whitespace-nowrap"
                       onClick={() =>
                         document.getElementById('file-input').click()
                       }

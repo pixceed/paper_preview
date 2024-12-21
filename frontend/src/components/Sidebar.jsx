@@ -66,6 +66,7 @@ const Sidebar = ({
                     ? 'bg-gray-600'
                     : 'hover:bg-gray-700'
                 }`}
+                style={{ maxWidth: '200px' }} // 最大幅を指定
               >
                 <button
                   key={dir.dir_name}
@@ -74,12 +75,14 @@ const Sidebar = ({
                       onSelectDirectory(dir.dir_name);
                     }
                   }}
+                  className="text-ellipsis overflow-hidden whitespace-nowrap flex-1 text-left"
+                  style={{ minWidth: 0 }} // 必須: 子要素のサイズ調整を効かせる
                 >
                   {dir.display_name}
                 </button>
                 <button
                   onClick={(event) => handleMoreButtonClick(event, dir.dir_name)}
-                  className="focus:outline-none p-1 hover:bg-gray-700 rounded"
+                  className="focus:outline-none p-1 hover:bg-gray-700 rounded flex-shrink-0"
                 >
                   <MoreHorizontal className="h-4 w-4" />
                 </button>

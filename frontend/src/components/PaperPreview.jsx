@@ -202,7 +202,7 @@ const PaperPreview = () => {
     }
   };
 
-  // まとめてメッセージを挿入(旧チャット含めて新セッションに再保存) 
+  // まとめてメッセージを挿入(旧チャット含めて新セッションに再保存)
   const bulkSaveChat = async (newSessId, messages) => {
     try {
       const res = await fetch(`http://${import.meta.env.VITE_APP_IP}:5601/bulk_save_chat`, {
@@ -587,10 +587,10 @@ const PaperPreview = () => {
                   }
 
                   if (data.llm_output) {
-                    if (data.llm_output === 'start') {
+                    if (data.llm_output === '$=~=$start$=~=$') {
                       inLLMOutput = true;
                       setContent('');
-                    } else if (data.llm_output === 'end') {
+                    } else if (data.llm_output === '$=~=$end$=~=$') {
                       inLLMOutput = false;
                       setIsAppending(false);
                       setMarkdownLoading(false);
@@ -653,7 +653,10 @@ const PaperPreview = () => {
           };
           setPdfToDisplay(newPdfToDisplay);
           setLatestDirectory(dirName);
+
+          // --- ここでサイドバーを更新する ---
           await fetchDirectories();
+
           setSelectedDirectory(dirName);
           setBaseFileName(baseFileName);
 
@@ -768,6 +771,7 @@ const PaperPreview = () => {
           url: `http://${import.meta.env.VITE_APP_IP}:5601/contents/${dirName}/${pdfFileName}`,
         });
 
+        // マークダウンの内容を取得
         await fetchMarkdownContent(dirName, baseFileName, 'origin');
         await fetchAgentState(dirName);
         await fetchChatSessions(dirName);
@@ -905,10 +909,10 @@ const PaperPreview = () => {
                 setProcessingStatus(data.status);
               }
               if (data.llm_output) {
-                if (data.llm_output === 'start') {
+                if (data.llm_output === '$=~=$start$=~=$') {
                   inLLMOutput = true;
                   setContent('');
-                } else if (data.llm_output === 'end') {
+                } else if (data.llm_output === '$=~=$end$=~=$') {
                   inLLMOutput = false;
                   setIsAppending(false);
                   setMarkdownLoading(false);
@@ -1012,12 +1016,8 @@ const PaperPreview = () => {
     }
   };
 
-  const fetchMarkdownContent = async (
-    dirName,
-    baseFileName,
-    type,
-    retryCount = 0
-  ) => {
+  // ▼▼▼ ここを修正してリトライ処理を削除 ▼▼▼
+  const fetchMarkdownContent = async (dirName, baseFileName, type) => {
     try {
       const mdFileName =
         type === 'origin'
@@ -1055,19 +1055,13 @@ const PaperPreview = () => {
         setCurrentMarkdownType('trans');
       }
     } catch (error) {
-      if (retryCount < 5) {
-        setTimeout(
-          () => fetchMarkdownContent(dirName, baseFileName, type, retryCount + 1),
-          1000
-        );
-      } else {
-        console.error('Error fetching markdown:', error);
-        setMarkdownError('マークダウンの取得に失敗しました');
-      }
+      console.error('Error fetching markdown:', error);
+      setMarkdownError('マークダウンの取得に失敗しました');
     } finally {
       setMarkdownLoading(false);
     }
   };
+  // ▲▲▲ リトライ処理を削除（1回で失敗なら即エラー） ▲▲▲
 
   const handleSave = async () => {
     try {
@@ -1336,23 +1330,23 @@ const PaperPreview = () => {
                 value={restoredSessionId ? String(restoredSessionId) : ''}
               >
                 <SelectTrigger className="w-2/3 bg-white font-bold">
-                    {restoredSessionId ? (
-                      <SelectValue>
-                        {
-                          chatSessions.find(
-                            (s) => s.id === Number(restoredSessionId)
-                          )?.created_at || "チャット履歴なし"
-                        }
-                      </SelectValue>
-                    ) : (
-                      <SelectValue
-                        placeholder={
-                          chatSessions.length > 0
-                            ? "チャット履歴を選択"
-                            : "チャット履歴なし"
-                        }
-                      />
-                    )}
+                  {restoredSessionId ? (
+                    <SelectValue>
+                      {
+                        chatSessions.find(
+                          (s) => s.id === Number(restoredSessionId)
+                        )?.created_at || "チャット履歴なし"
+                      }
+                    </SelectValue>
+                  ) : (
+                    <SelectValue
+                      placeholder={
+                        chatSessions.length > 0
+                          ? "チャット履歴を選択"
+                          : "チャット履歴なし"
+                      }
+                    />
+                  )}
                 </SelectTrigger>
                 <SelectContent>
                   <SelectGroup>

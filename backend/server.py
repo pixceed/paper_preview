@@ -422,14 +422,13 @@ def extract_text_from_pdf(pdf_stream, file_name):
     yield json.dumps({"status": "マークダウン変換中..."})
     md_text = conv_res.document.export_to_markdown()
 
-    yield json.dumps({"llm_output": "start"})
+    yield json.dumps({"llm_output": "$=~=$start$=~=$"})
     result_text = ""
 
     # GPT (gpt-4o-mini)を使ってマークダウンに図表リンクを追記させる
-    with get_openai_callback() as cb:
-        chat_model = ChatOpenAI(model="gpt-4o-mini", temperature=0, streaming=True)
-        system_prompt = SystemMessage(
-            content=
+    chat_model = ChatOpenAI(model="gpt-4o-mini", temperature=0, streaming=True)
+    system_prompt = SystemMessage(
+        content=
 """
 与えられたマークダウン文章に以下の処理を行い、追記後のマークダウン文章を出力してください。
 
@@ -438,17 +437,15 @@ def extract_text_from_pdf(pdf_stream, file_name):
 
 出力は、必ずマークダウン文章のみで、余計な文章は含めないでください。
 """
-        )
-        image_message = HumanMessage(content=md_text)
-        messages = [system_prompt, image_message]
+    )
+    image_message = HumanMessage(content=md_text)
+    messages = [system_prompt, image_message]
 
-        for result in chat_model.stream(messages):
-            result_text += result.content
-            if result == '':
-                continue
-            yield json.dumps({"llm_output": result.content})
-
-    yield json.dumps({"llm_output": "end"})
+    for result in chat_model.stream(messages):
+        result_text += result.content
+        if result == '':
+            continue
+        yield json.dumps({"llm_output": result.content})
 
     result_text = result_text.replace("```markdown", "").replace("```", "")
 
@@ -456,7 +453,7 @@ def extract_text_from_pdf(pdf_stream, file_name):
     with open(md_filename, mode="w", encoding="utf-8") as f:
         f.write(result_text)
 
-    end_time = time.time()
+    yield json.dumps({"llm_output": "$=~=$end$=~=$"})
     yield json.dumps({"dir_name": dir_name, "base_file_name": base_name})
 
 
@@ -494,7 +491,7 @@ def trans_markdown():
                 md_text = f.read()
 
             yield f'data: {json.dumps({"status": "日本語に変換中..."})}\n\n'
-            yield f'data: {json.dumps({"llm_output": "start"})}\n\n'
+            yield f'data: {json.dumps({"llm_output": "$=~=$start$=~=$"})}\n\n'
             result_text = ""
 
             with get_openai_callback() as cb:
@@ -518,11 +515,12 @@ def trans_markdown():
                         continue
                     yield f'data: {json.dumps({"llm_output": result.content})}\n\n'
 
-            yield f'data: {json.dumps({"llm_output": "end"})}\n\n'
+            
             ja_md_filename = os.path.join(dir_path, f"{base_name}_trans.md")
             with open(ja_md_filename, mode="w", encoding="utf-8") as f:
                 f.write(result_text)
 
+            yield f'data: {json.dumps({"llm_output": "$=~=$end$=~=$"})}\n\n'
             yield f'data: {json.dumps({"status": "変換完了しました", "base_file_name": base_name})}\n\n'
         except Exception as e:
             error_traceback = traceback.format_exc()
@@ -709,7 +707,7 @@ def scholar_agent():
         return jsonify({"error": "JSONペイロードが必要です。"}), 400
 
     state = data.get('state')
-    user_input = data.get('user_input')  # JSON文字列 (例: '[{"type":"text","text":"～"},{"type":"image_url","image_url":{"url":"data:image/png;base64,..."}}]')
+    user_input = data.get('user_input')  # JSON文字列
     session_id = data.get('session_id')
 
     if not state:
@@ -734,7 +732,6 @@ def scholar_agent():
                     if item.get("type") == "text":
                         user_str_for_llm += f"ユーザーのメッセージ: {item.get('text','')}\n"
                     elif item.get("type") == "image_url":
-                        # base64画像をそのままLLMに文字列として渡す例
                         user_str_for_llm += f"ユーザーは画像をアップロードしました: {item['image_url']['url']}\n"
             else:
                 # 配列でない場合
