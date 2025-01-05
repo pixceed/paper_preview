@@ -88,9 +88,14 @@ const PaperPreview = () => {
   // セッション管理用
   const [sessionId, setSessionId] = useState(null);             
   const [chatSessions, setChatSessions] = useState([]);          
-  const [restoredSessionId, setRestoredSessionId] = useState(null); 
+  const [restoredSessionId, setRestoredSessionId] = useState(null);
   const [isNewSession, setIsNewSession] = useState(false);
 
+  // 「解説」「スレ」ボタンの表示制御
+  const [showExplainButton, setShowExplainButton] = useState(true);
+  const [showThreadButton, setShowThreadButton] = useState(true);
+
+  // PDF.js のコンテナ幅をアップデートする関数
   const updateContainerWidth = () => {
     if (pdfContainerRef.current) {
       const width = pdfContainerRef.current.offsetWidth;
@@ -100,6 +105,7 @@ const PaperPreview = () => {
     }
   };
 
+  // ディレクトリ一覧の取得
   const fetchDirectories = async () => {
     try {
       const response = await fetchWithTimeout(
@@ -228,6 +234,7 @@ const PaperPreview = () => {
     }
   };
 
+  // ページリサイズに応じてコンテナ幅をアップデート
   useLayoutEffect(() => {
     updateContainerWidth();
   }, [pdfToDisplay, selectedDirectory]);
@@ -239,10 +246,12 @@ const PaperPreview = () => {
     };
   }, []);
 
+  // 初回マウント時にディレクトリ一覧を取得
   useEffect(() => {
     fetchDirectories();
   }, []);
 
+  // チャットリセット
   const handleChatReset = async () => {
     if (!selectedDirectory) {
       alert('ディレクトリが選択されていません');
@@ -255,6 +264,7 @@ const PaperPreview = () => {
     await fetchAgentState(selectedDirectory);
   };
 
+  // エージェントの状態を初期化
   const fetchAgentState = async (dirName) => {
     try {
       const response = await fetch(
@@ -278,18 +288,14 @@ const PaperPreview = () => {
     }
   };
 
-  // ---------------------------------------------
-  // Base64変換してLLMに投げるための関数
-  // ---------------------------------------------
+  // 画像URLをBase64に変換
   const convertImageToBase64 = (fileUrl) => {
     return new Promise((resolve, reject) => {
-      // fetch(blob)
       fetch(fileUrl)
         .then((res) => res.blob())
         .then((blob) => {
           const reader = new FileReader();
           reader.onloadend = () => {
-            // "data:image/png;base64,xxx" という文字列が reader.result に入る
             resolve(reader.result);
           };
           reader.onerror = (err) => {
@@ -301,12 +307,10 @@ const PaperPreview = () => {
     });
   };
 
-  // ---------------------------------------------
-  // メッセージ送信(画像はサーバーに保存せず、Base64をLLMに送る)
-  // ---------------------------------------------
+  // メッセージ送信処理
   const handleSend = async () => {
     if (!message.trim() && pendingImages.length === 0) {
-      // 何も送るものがない場合
+      // 何も送るものがない
       return;
     }
     if (!selectedDirectory) {
@@ -319,7 +323,6 @@ const PaperPreview = () => {
     }
 
     const currentMessage = message.trim();
-    // 送信したタイミングでメッセージ入力欄をクリア
     setMessage('');
 
     try {
@@ -348,8 +351,7 @@ const PaperPreview = () => {
         setIsNewSession(true);
       }
 
-      // 1) まずフロントのチャット欄にユーザーの内容を反映
-      // 「テキスト」「画像」それぞれ複数メッセージに分けて表示。
+      // 1) まずフロント表示にユーザー入力を反映
       const newChatMessages = [];
       if (currentMessage) {
         newChatMessages.push({
@@ -358,7 +360,6 @@ const PaperPreview = () => {
           content: currentMessage,
         });
       }
-      // pendingImagesを全部読み込む
       for (let i = 0; i < pendingImages.length; i++) {
         newChatMessages.push({
           role: 'user',
@@ -366,10 +367,9 @@ const PaperPreview = () => {
           content: pendingImages[i],
         });
       }
-      // フロント表示に追加
       setChat((prev) => [...prev, ...newChatMessages]);
 
-      // 2) 画像をbase64にして + テキストをまとめ、LLMへ送るための配列にする
+      // 2) LLMに送るための配列を作り、Base64変換等を行う
       const contentArray = [];
       if (currentMessage) {
         contentArray.push({
@@ -379,7 +379,6 @@ const PaperPreview = () => {
       }
       for (let i = 0; i < pendingImages.length; i++) {
         const base64Data = await convertImageToBase64(pendingImages[i]);
-        // base64Data は "data:image/png;base64,..." の形
         contentArray.push({
           type: "image_url",
           image_url: {
@@ -387,26 +386,20 @@ const PaperPreview = () => {
           },
         });
       }
-      // pendingImagesをクリア
       setPendingImages([]);
 
-      // 3) scholar_agent に問い合わせ ( user_input は JSON文字列にする )
+      // 3) scholar_agent へ問い合わせ
       if (contentArray.length > 0) {
         const newAgentState = { ...agentState };
-
-        // DB用に、ユーザーメッセージは JSON文字列として保存する
         const userContentJson = JSON.stringify(contentArray);
 
-        // scholar_agent へ問い合わせ
         const response = await fetch(`http://${import.meta.env.VITE_APP_IP}:5601/scholar_agent`, {
           method: 'POST',
           mode: 'cors',
-          headers: {
-            'Content-Type': 'application/json',
-          },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             state: newAgentState,
-            user_input: userContentJson,  // JSON文字列を渡す
+            user_input: userContentJson,
             session_id: finalSessionId,
           }),
         });
@@ -419,7 +412,7 @@ const PaperPreview = () => {
         const data = await response.json();
         setAgentState(data.state);
 
-        // アシスタントメッセージ(テキスト)を画面に追加
+        // アシスタントメッセージを追加
         const assistantMessage = data.state.messages[data.state.messages.length - 1];
         setChat((prevChat) => [
           ...prevChat,
@@ -436,8 +429,6 @@ const PaperPreview = () => {
           setRestoredSessionId(finalSessionId);
         }
       } else {
-        // もし送るものが無ければ何もしないが、
-        // 新規セッションだけは一覧に反映させる
         if (sessionWasNewlyCreated) {
           await fetchChatSessions(selectedDirectory);
           setRestoredSessionId(finalSessionId);
@@ -450,12 +441,11 @@ const PaperPreview = () => {
     } finally {
       setChatLoading(false);
       setIsAssistantTyping(false);
-      // 再度セッション一覧をロード
       await fetchChatSessions(selectedDirectory);
     }
   };
 
-  // 画像アップロード前の一時プレビュー用イベントハンドラ群
+  // 画像アップロード前の一時プレビュー削除
   const handleImageUpload = (e) => {
     const files = e.target.files;
     if (files) {
@@ -463,11 +453,9 @@ const PaperPreview = () => {
       setPendingImages([...pendingImages, ...newImages]);
     }
   };
-
   const handleRemoveImage = (index) => {
     setPendingImages((prev) => prev.filter((_, i) => i !== index));
   };
-
   const handlePaste = (e) => {
     const items = e.clipboardData.items;
     const images = [];
@@ -485,11 +473,13 @@ const PaperPreview = () => {
     }
   };
 
+  // PDF読み込み時のコールバック
   function onDocumentLoadSuccess({ numPages }) {
     setNumPages(numPages);
     updateContainerWidth();
   }
 
+  // ズームイン／アウト
   const handleZoomIn = () => {
     if (pdfContainerRef.current) {
       const container = pdfContainerRef.current;
@@ -499,25 +489,21 @@ const PaperPreview = () => {
       const beforeScrollLeft = container.scrollLeft;
       const containerHeight = container.clientHeight;
       const containerWidth = container.clientWidth;
-      
       const scrollRatioY = (beforeScrollTop + containerHeight / 2) / beforeHeight;
       const scrollRatioX = (beforeScrollLeft + containerWidth / 2) / beforeWidth;
       
       setScale((prevScale) => {
         const newScale = Math.min(prevScale + 0.2, 3.0);
-        
         setTimeout(() => {
           const afterHeight = container.scrollHeight;
           const afterWidth = container.scrollWidth;
           container.scrollTop = scrollRatioY * afterHeight - containerHeight / 2;
           container.scrollLeft = scrollRatioX * afterWidth - containerWidth / 2;
         }, 0);
-        
         return newScale;
       });
     }
   };
-
   const handleZoomOut = () => {
     if (pdfContainerRef.current) {
       const container = pdfContainerRef.current;
@@ -527,25 +513,23 @@ const PaperPreview = () => {
       const beforeScrollLeft = container.scrollLeft;
       const containerHeight = container.clientHeight;
       const containerWidth = container.clientWidth;
-      
       const scrollRatioY = (beforeScrollTop + containerHeight / 2) / beforeHeight;
       const scrollRatioX = (beforeScrollLeft + containerWidth / 2) / beforeWidth;
       
       setScale((prevScale) => {
         const newScale = Math.max(prevScale - 0.2, 0.5);
-        
         setTimeout(() => {
           const afterHeight = container.scrollHeight;
           const afterWidth = container.scrollWidth;
           container.scrollTop = scrollRatioY * afterHeight - containerHeight / 2;
           container.scrollLeft = scrollRatioX * afterWidth - containerWidth / 2;
         }, 0);
-        
         return newScale;
       });
     }
   };
 
+  // プレビュー領域のスクロール制御
   useEffect(() => {
     if (previewContainerRef.current) {
       if (isAppending) {
@@ -556,7 +540,7 @@ const PaperPreview = () => {
     }
   }, [content, isAppending]);
 
-  // PDF選択 or URL指定時
+  // (1) PDF選択 or URL指定でPDF->Markdown変換
   useEffect(() => {
     const processPdf = async () => {
       if (!pdfToDisplay) return;
@@ -592,9 +576,7 @@ const PaperPreview = () => {
             formData.append('file', pdfToDisplay.file);
             options.body = formData;
           } else if (pdfToDisplay.type === 'url') {
-            options.headers = {
-              'Content-Type': 'application/json',
-            };
+            options.headers = { 'Content-Type': 'application/json' };
             options.body = JSON.stringify({ url: pdfToDisplay.url });
           }
 
@@ -679,12 +661,9 @@ const PaperPreview = () => {
               mode: 'cors',
             }
           );
-
           if (!pdfFileResponse || !pdfFileResponse.ok) {
             const errorData = pdfFileResponse ? await pdfFileResponse.json() : {};
-            throw new Error(
-              errorData.error || 'ディレクトリ内のファイル一覧の取得に失敗しました'
-            );
+            throw new Error(errorData.error || 'ディレクトリ内のファイル一覧の取得に失敗しました');
           }
 
           const pdfFilesData = await pdfFileResponse.json();
@@ -702,12 +681,12 @@ const PaperPreview = () => {
           setPdfToDisplay(newPdfToDisplay);
           setLatestDirectory(dirName);
 
-          // --- ここでサイドバーを更新する ---
           await fetchDirectories();
 
           setSelectedDirectory(dirName);
           setBaseFileName(baseFileName);
 
+          // _trans.md
           const transMarkdownFile = markdownFiles.find((name) =>
             name.endsWith('_trans.md')
           );
@@ -717,6 +696,26 @@ const PaperPreview = () => {
           } else {
             setShowJapaneseButton(false);
             setShowTranslateButton(true);
+          }
+
+          // _explain.md
+          const explainMarkdownFile = markdownFiles.find((name) =>
+            name.endsWith('_explain.md')
+          );
+          if (explainMarkdownFile) {
+            setShowExplainButton(false);
+          } else {
+            setShowExplainButton(true);
+          }
+
+          // _thread.md
+          const threadMarkdownFile = markdownFiles.find((name) =>
+            name.endsWith('_thread.md')
+          );
+          if (threadMarkdownFile) {
+            setShowThreadButton(false);
+          } else {
+            setShowThreadButton(true);
           }
 
           await fetchAgentState(dirName);
@@ -736,7 +735,7 @@ const PaperPreview = () => {
     processPdf();
   }, [pdfToDisplay]);
 
-  // ディレクトリ選択時
+  // (2) ディレクトリ選択時
   useEffect(() => {
     const processDirectory = async () => {
       if (!selectedDirectory) return;
@@ -791,6 +790,7 @@ const PaperPreview = () => {
           );
         }
 
+        // origin.md
         const originMarkdownFile = markdownFiles.find((name) =>
           name.endsWith('_origin.md')
         );
@@ -803,6 +803,7 @@ const PaperPreview = () => {
         const baseFileName = originMarkdownFile.replace('_origin.md', '');
         setBaseFileName(baseFileName);
 
+        // _trans.md
         const transMarkdownFile = markdownFiles.find((name) =>
           name.endsWith('_trans.md')
         );
@@ -812,6 +813,26 @@ const PaperPreview = () => {
         } else {
           setShowJapaneseButton(false);
           setShowTranslateButton(true);
+        }
+
+        // _explain.md
+        const explainMarkdownFile = markdownFiles.find((name) =>
+          name.endsWith('_explain.md')
+        );
+        if (explainMarkdownFile) {
+          setShowExplainButton(false);
+        } else {
+          setShowExplainButton(true);
+        }
+
+        // _thread.md
+        const threadMarkdownFile = markdownFiles.find((name) =>
+          name.endsWith('_thread.md')
+        );
+        if (threadMarkdownFile) {
+          setShowThreadButton(false);
+        } else {
+          setShowThreadButton(true);
         }
 
         setPdfToDisplay({
@@ -834,10 +855,12 @@ const PaperPreview = () => {
     processDirectory();
   }, [selectedDirectory]);
 
+  // サイドバー開閉
   const toggleSidebar = () => {
     setSidebarOpen((prev) => !prev);
   };
 
+  // ディレクトリ選択時のハンドラ
   const handleSelectDirectory = (dirName) => {
     setSelectedDirectory(dirName);
     setPdfToDisplay(null);
@@ -853,16 +876,17 @@ const PaperPreview = () => {
     setChatSessions([]);
     setRestoredSessionId(null);
     setIsNewSession(false);
+    setShowExplainButton(true);
+    setShowThreadButton(true);
   };
 
+  // ディレクトリ削除確認
   const handleRequestDeleteDirectory = (dirName) => {
     setConfirmDeleteDir(dirName);
   };
-
   const handleCancelDelete = () => {
     setConfirmDeleteDir(null);
   };
-
   const handleConfirmDelete = async () => {
     if (confirmDeleteDir) {
       await handleDeleteDirectory(confirmDeleteDir);
@@ -870,14 +894,13 @@ const PaperPreview = () => {
     }
   };
 
+  // ディレクトリ削除
   const handleDeleteDirectory = async (dirName) => {
     try {
       const response = await fetch(`http://${import.meta.env.VITE_APP_IP}:5601/delete_directory`, {
         method: 'POST',
         mode: 'cors',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ dir_name: dirName }),
       });
       if (!response.ok) {
@@ -903,6 +926,7 @@ const PaperPreview = () => {
     }
   };
 
+  // 翻訳リクエスト
   const handleTranslate = async () => {
     if (!selectedDirectory || !baseFileName) {
       alert('ディレクトリまたはファイル名が不明です');
@@ -918,9 +942,7 @@ const PaperPreview = () => {
       const options = {
         method: 'POST',
         mode: 'cors',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ dir_name: selectedDirectory }),
       };
 
@@ -1020,6 +1042,7 @@ const PaperPreview = () => {
     }
   };
 
+  // 日本語訳を表示
   const handleShowJapanese = async () => {
     if (!selectedDirectory || !baseFileName) {
       alert('ディレクトリまたはファイル名が不明です');
@@ -1042,6 +1065,7 @@ const PaperPreview = () => {
     }
   };
 
+  // 原文を表示
   const handleShowOrigin = async () => {
     if (!selectedDirectory || !baseFileName) {
       alert('ディレクトリまたはファイル名が不明です');
@@ -1064,13 +1088,45 @@ const PaperPreview = () => {
     }
   };
 
-  // ▼▼▼ ここを修正してリトライ処理を削除 ▼▼▼
+  // 任意タイプのマークダウン表示
+  const handleShowContent = async (type) => {
+    if (!selectedDirectory || !baseFileName) {
+      alert('ディレクトリまたはファイル名が不明です');
+      return;
+    }
+    try {
+      setMarkdownLoading(true);
+      setProcessingStatus('');
+      setIsAppending(false);
+      setContent('');
+
+      await fetchMarkdownContent(selectedDirectory, baseFileName, type);
+      setCurrentMarkdownType(type);
+      setIsModified(false);
+      setActiveTab('preview');
+    } catch (error) {
+      console.error(`Error fetching ${type} markdown:`, error);
+      alert(`${type}の取得中にエラーが発生しました: ` + error.message);
+      setMarkdownLoading(false);
+    }
+  };
+
+  // マークダウンファイルを取得
   const fetchMarkdownContent = async (dirName, baseFileName, type) => {
     try {
-      const mdFileName =
-        type === 'origin'
-          ? `${baseFileName}_origin.md`
-          : `${baseFileName}_trans.md`;
+      let mdFileName;
+      if (type === 'origin') {
+        mdFileName = `${baseFileName}_origin.md`;
+      } else if (type === 'trans') {
+        mdFileName = `${baseFileName}_trans.md`;
+      } else if (type === 'explain') {
+        mdFileName = `${baseFileName}_explain.md`;
+      } else if (type === 'thread') {
+        mdFileName = `${baseFileName}_thread.md`;
+      } else {
+        throw new Error('Unknown markdown type: ' + type);
+      }
+
       const markdownResponse = await fetchWithTimeout(
         `http://${import.meta.env.VITE_APP_IP}:5601/contents/${dirName}/${mdFileName}`,
         {
@@ -1096,12 +1152,7 @@ const PaperPreview = () => {
 
       setContent(markdownContent);
       setIsModified(false);
-
-      if (type === 'origin') {
-        setCurrentMarkdownType('origin');
-      } else {
-        setCurrentMarkdownType('trans');
-      }
+      setCurrentMarkdownType(type);
     } catch (error) {
       console.error('Error fetching markdown:', error);
       setMarkdownError('マークダウンの取得に失敗しました');
@@ -1109,8 +1160,8 @@ const PaperPreview = () => {
       setMarkdownLoading(false);
     }
   };
-  // ▲▲▲ リトライ処理を削除（1回で失敗なら即エラー） ▲▲▲
 
+  // マークダウンを保存
   const handleSave = async () => {
     try {
       if (!selectedDirectory || !baseFileName) {
@@ -1119,10 +1170,18 @@ const PaperPreview = () => {
       }
 
       const type = currentMarkdownType;
-      const mdFileName =
-        type === 'origin'
-          ? `${baseFileName}_origin.md`
-          : `${baseFileName}_trans.md`;
+      let mdFileName;
+      if (type === 'origin') {
+        mdFileName = `${baseFileName}_origin.md`;
+      } else if (type === 'trans') {
+        mdFileName = `${baseFileName}_trans.md`;
+      } else if (type === 'explain') {
+        mdFileName = `${baseFileName}_explain.md`;
+      } else if (type === 'thread') {
+        mdFileName = `${baseFileName}_thread.md`;
+      } else {
+        throw new Error('Unknown markdown type for saving: ' + type);
+      }
 
       const url = `http://${import.meta.env.VITE_APP_IP}:5601/save_markdown`;
       const options = {
@@ -1151,13 +1210,179 @@ const PaperPreview = () => {
     }
   };
 
-  // セレクトでセッションを選択したとき（チャット復元）
+  // チャットセッション選択時
   const handleSelectSession = async (selectedSessionId) => {
     setChat([]);
     setSessionId(null);
     setRestoredSessionId(selectedSessionId);
     setIsNewSession(false);
     await fetchChatHistory(selectedSessionId);
+  };
+
+  // 解説生成
+  const handleExplain = async () => {
+    if (!selectedDirectory || !baseFileName) {
+      alert('ディレクトリまたはファイル名が不明です');
+      return;
+    }
+    try {
+      setMarkdownLoading(true);
+      setProcessingStatus('論文を解説中...');
+      setIsAppending(true);
+      setContent('');
+
+      const response = await fetch(
+        `http://${import.meta.env.VITE_APP_IP}:5601/explain_paper`,
+        {
+          method: 'POST',
+          mode: 'cors',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ dir_name: selectedDirectory }),
+        }
+      );
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || '解説の生成に失敗しました');
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder('utf-8');
+
+      let inLLMOutput = false;
+      let buffer = '';
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        const chunk = decoder.decode(value, { stream: true });
+        buffer += chunk;
+
+        let messages = buffer.split('\n\n');
+        buffer = messages.pop();
+
+        for (const message of messages) {
+          if (message.startsWith('data:')) {
+            const dataContent = message.slice('data: '.length);
+            try {
+              const data = JSON.parse(dataContent);
+              if (data.error) {
+                throw new Error(data.error);
+              }
+              if (data.status) {
+                setProcessingStatus(data.status);
+              }
+              if (data.llm_output) {
+                if (data.llm_output === '$=~=$start$=~=$') {
+                  inLLMOutput = true;
+                  setContent('');
+                } else if (data.llm_output === '$=~=$end$=~=$') {
+                  inLLMOutput = false;
+                  setIsAppending(false);
+                  setMarkdownLoading(false);
+                  setProcessingStatus('');
+                  setCurrentMarkdownType('explain');
+                  setShowExplainButton(false);
+                } else if (inLLMOutput) {
+                  setContent((prevContent) => prevContent + data.llm_output);
+                }
+              }
+            } catch (e) {
+              console.error('Error parsing data:', e);
+            }
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Error during explanation:', error);
+      alert('解説生成中にエラーが発生しました: ' + error.message);
+      setMarkdownLoading(false);
+      setIsAppending(false);
+    }
+  };
+
+  // スレ生成
+  const handleThread = async () => {
+    if (!selectedDirectory || !baseFileName) {
+      alert('ディレクトリまたはファイル名が不明です');
+      return;
+    }
+    try {
+      setMarkdownLoading(true);
+      setProcessingStatus('スレッド形式で解説中...');
+      setIsAppending(true);
+      setContent('');
+
+      const response = await fetch(
+        `http://${import.meta.env.VITE_APP_IP}:5601/thread_paper`,
+        {
+          method: 'POST',
+          mode: 'cors',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ dir_name: selectedDirectory }),
+        }
+      );
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'スレッド形式の解説生成に失敗しました');
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder('utf-8');
+
+      let inLLMOutput = false;
+      let buffer = '';
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        const chunk = decoder.decode(value, { stream: true });
+        buffer += chunk;
+
+        let messages = buffer.split('\n\n');
+        buffer = messages.pop();
+
+        for (const message of messages) {
+          if (message.startsWith('data:')) {
+            const dataContent = message.slice('data: '.length);
+            try {
+              const data = JSON.parse(dataContent);
+              if (data.error) {
+                throw new Error(data.error);
+              }
+              if (data.status) {
+                setProcessingStatus(data.status);
+              }
+              if (data.llm_output) {
+                if (data.llm_output === '$=~=$start$=~=$') {
+                  inLLMOutput = true;
+                  setContent('');
+                } else if (data.llm_output === '$=~=$end$=~=$') {
+                  inLLMOutput = false;
+                  setIsAppending(false);
+                  setMarkdownLoading(false);
+                  setProcessingStatus('');
+                  setCurrentMarkdownType('thread');
+                  setShowThreadButton(false);
+                  // ここで _thread.md を再読み込み（追加の処理）
+                  await fetchMarkdownContent(selectedDirectory, baseFileName, 'thread');
+                } else if (inLLMOutput) {
+                  setContent((prevContent) => prevContent + data.llm_output);
+                }
+              }
+            } catch (e) {
+              console.error('Error parsing data:', e);
+            }
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Error during thread generation:', error);
+      alert('スレッド生成中にエラーが発生しました: ' + error.message);
+      setMarkdownLoading(false);
+      setIsAppending(false);
+    }
   };
 
   return (
@@ -1191,6 +1416,8 @@ const PaperPreview = () => {
           setChatSessions([]);
           setRestoredSessionId(null);
           setIsNewSession(false);
+          setShowExplainButton(true);
+          setShowThreadButton(true);
         }}
         onMenuClick={toggleSidebar}
         sidebarOpen={sidebarOpen}
@@ -1279,36 +1506,75 @@ const PaperPreview = () => {
               className="h-full pb-3"
             >
               <div className="flex justify-between items-center mb-2">
-                <div className="flex space-x-2">
-                  <Button
-                    variant={currentMarkdownType === 'origin' ? 'outline' : 'primary'}
-                    size="sm"
-                    onClick={handleShowOrigin}
-                  >
-                    原文
-                  </Button>
-                  {showTranslateButton && (
+                {/* ▼▼▼ ここで pdfToDisplay が null のときはボタンを非表示 ▼▼▼ */}
+                {pdfToDisplay && (
+                  <div className="flex space-x-2">
                     <Button
-                      variant="secondary"
+                      variant={currentMarkdownType === 'origin' ? 'outline' : 'primary'}
                       size="sm"
-                      onClick={handleTranslate}
+                      onClick={handleShowOrigin}
                     >
-                      +翻訳
+                      原文
                     </Button>
-                  )}
-                  {showJapaneseButton && (
-                    <Button
-                      variant={currentMarkdownType === 'trans' ? 'outline' : 'primary'}
-                      size="sm"
-                      onClick={handleShowJapanese}
-                    >
-                      日本語訳
-                    </Button>
-                  )}
-                </div>
+                    {showTranslateButton && (
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={handleTranslate}
+                      >
+                        +翻訳
+                      </Button>
+                    )}
+                    {showJapaneseButton && (
+                      <Button
+                        variant={currentMarkdownType === 'trans' ? 'outline' : 'primary'}
+                        size="sm"
+                        onClick={handleShowJapanese}
+                      >
+                        日本語訳
+                      </Button>
+                    )}
+                    {/* 解説ボタン */}
+                    {showExplainButton ? (
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={handleExplain}
+                      >
+                        +解説
+                      </Button>
+                    ) : (
+                      <Button
+                        variant={currentMarkdownType === 'explain' ? 'outline' : 'primary'}
+                        size="sm"
+                        onClick={() => handleShowContent('explain')}
+                      >
+                        解説
+                      </Button>
+                    )}
+                    {/* スレボタン */}
+                    {showThreadButton ? (
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={handleThread}
+                      >
+                        +スレ
+                      </Button>
+                    ) : (
+                      <Button
+                        variant={currentMarkdownType === 'thread' ? 'outline' : 'primary'}
+                        size="sm"
+                        onClick={() => handleShowContent('thread')}
+                      >
+                        スレ
+                      </Button>
+                    )}
+                  </div>
+                )}
 
                 <div className="flex items-center">
-                  {activeTab === 'edit' && isModified && (
+                  {pdfToDisplay && activeTab === 'edit' && isModified && (
                     <Button
                       variant="primary"
                       size="sm"
@@ -1318,10 +1584,13 @@ const PaperPreview = () => {
                       保存する
                     </Button>
                   )}
-                  <TabsList>
-                    <TabsTrigger value="edit">編集モード</TabsTrigger>
-                    <TabsTrigger value="preview">プレビューモード</TabsTrigger>
-                  </TabsList>
+                  {pdfToDisplay ? (
+                    <TabsList>
+                      <TabsTrigger value="edit">編集モード</TabsTrigger>
+                      <TabsTrigger value="preview">プレビューモード</TabsTrigger>
+                    </TabsList>
+                  ) : (<div className='mt-9'></div>)
+                  }
                 </div>
               </div>
 

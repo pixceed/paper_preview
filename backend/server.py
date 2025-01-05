@@ -428,7 +428,7 @@ def extract_text_from_pdf(pdf_stream, file_name):
     ・文章中における図の部分に、`![Local Image](picture-$.png)\n`($は図番号)を追記してください。
     ・文章中における表の部分に、`![Local Image](table-$.png)\n`($は表番号)を追記してください。
 
-    出力は、必��マークダウン文章のみで、余計な文章は含めないでください。
+    出力は、必ずマークダウン文章のみで、余計な文章は含めないでください。
     """
         )
         image_message = HumanMessage(content=md_text)
@@ -764,7 +764,7 @@ def scholar_agent():
                     response = value["messages"][-1].content
                     state["messages"].append({"role": "assistant", "content": response})
 
-        # 5) アシスタント応���をDBに保存
+        # 5) アシスタント応答をDBに保存
         save_chat_message(session_id, 'assistant', response)
 
         response_data = {
@@ -816,6 +816,227 @@ def download_directory():
         error_traceback = traceback.format_exc()
         print(error_traceback)
         return jsonify({'error': f'Error creating zip file: {str(e)}'}), 500
+
+@app.route('/explain_paper', methods=['POST'])
+def explain_paper():
+    """
+    論文の内容を解説するマークダウンを生成。
+    SSE (Server-Sent Events)で進捗を返す。
+    """
+    @stream_with_context
+    def generate():
+        try:
+            data = request.get_json()
+            dir_name = data.get('dir_name')
+            if not dir_name:
+                yield f'data: {json.dumps({"error": "dir_name is required"})}\n\n'
+                return
+
+            dir_path = os.path.join(CONTENT_DATA_DIR, dir_name)
+            if not os.path.isdir(dir_path):
+                yield f'data: {json.dumps({"error": "Directory not found"})}\n\n'
+                return
+
+            files = os.listdir(dir_path)
+            origin_md_files = [f for f in files if f.lower().endswith('_origin.md')]
+            if not origin_md_files:
+                yield f'data: {json.dumps({"error": "Origin markdown file not found"})}\n\n'
+                return
+
+            origin_md_path = os.path.join(dir_path, origin_md_files[0])
+            base_name = os.path.splitext(origin_md_files[0])[0].replace('_origin', '')
+
+            with open(origin_md_path, 'r', encoding='utf-8') as f:
+                md_text = f.read()
+
+            yield f'data: {json.dumps({"status": "論文を解説中..."})}\n\n'
+            yield f'data: {json.dumps({"llm_output": "$=~=$start$=~=$"})}\n\n'
+            result_text = ""
+
+            with get_openai_callback() as cb:
+                chat_model = app.config["CHAT_MODEL"]
+                chat_model.temperature = 0
+                chat_model.streaming = True
+
+                system_prompt = SystemMessage(
+                    content=
+"""
+この論文を読みたいです。以下の制約を守り、要約をお願いします。
+目的：論文の概要から詳細をつかみ、この論文をより詳しく読むべきか判断したい
+対象読者：深層学習の基礎は知っている大学生
+構成は、以下の例に従い、要約を生成するときは全ての内容を網羅した上で、この論文を理解するのに必要だと判断した部分を扱ってください。もし論文に書かれていないのであれば、「論文には書かれていませんでした」と出力すること。
+全ては論文に書かれていることのみを使うこと。ハルシネーションは禁止です。
+直訳ではなく、AIの文脈を考慮して文章を生成すること。
+出力は文章をそのままではなく、マークダウンにして流れや構成要素をわかりやすくすること。
+出力の長さは気にしないこと。途中で途切れても良いです。このタスクでは出力長制限よりも、私が与えたタスクを完璧にこなすことを何よりも優先すること。内容の抜け漏れは断じて許されません。
+
+=====構成（例）=====
+# abstract
+日本語訳
+
+# 解決する課題
+## 既存研究の流れ（関連研究）
+## この研究が解決する課題・どう解決するのか
+解決する課題1
+ →どう解決するか
+解決する課題2
+ →どう解決するか
+解決する課題3
+ →どう解決するか
+（以下略）
+
+# 提案手法
+## 提案手法の直感的な説明
+## 提案手法詳細
+提案手法の構成コンポーネントや、仕組みの詳細
+
+# 実験
+## 実験設定
+## 実験結果
+
+# 考察
+## なぜこの手法が優れているのか
+## この手法が既存のものより優れている点・劣っている点
+
+# 今後の発展
+"""
+                )
+                explain_message = HumanMessage(content=md_text)
+                messages = [system_prompt, explain_message]
+
+                for result in chat_model.stream(messages):
+                    result_text += result.content
+                    if result == '':
+                        continue
+                    yield f'data: {json.dumps({"llm_output": result.content})}\n\n'
+
+                print(f"\nTotal Tokens: {cb.total_tokens}")
+                print(f"Prompt Tokens: {cb.prompt_tokens}")
+                print(f"Completion Tokens: {cb.completion_tokens}")
+                print(f"Total Cost (USD): ${cb.total_cost}\n")
+
+            explain_md_filename = os.path.join(dir_path, f"{base_name}_explain.md")
+            with open(explain_md_filename, mode="w", encoding="utf-8") as f:
+                f.write(result_text)
+
+            yield f'data: {json.dumps({"llm_output": "$=~=$end$=~=$"})}\n\n'
+            yield f'data: {json.dumps({"status": "解説の生成が完了しました"})}\n\n'
+
+        except Exception as e:
+            error_traceback = traceback.format_exc()
+            print(error_traceback)
+            yield f'data: {json.dumps({"error": f"Error during explanation: {str(e)}"})}\n\n'
+            return
+
+    return Response(generate(), mimetype='text/event-stream')
+
+@app.route('/thread_paper', methods=['POST'])
+def thread_paper():
+    """
+    論文の内容をなんJスレッド形式で解説するマークダウンを生成。
+    SSE (Server-Sent Events)で進捗を返す。
+    """
+    @stream_with_context
+    def generate():
+        try:
+            data = request.get_json()
+            dir_name = data.get('dir_name')
+            if not dir_name:
+                yield f'data: {json.dumps({"error": "dir_name is required"})}\n\n'
+                return
+
+            dir_path = os.path.join(CONTENT_DATA_DIR, dir_name)
+            if not os.path.isdir(dir_path):
+                yield f'data: {json.dumps({"error": "Directory not found"})}\n\n'
+                return
+
+            files = os.listdir(dir_path)
+            origin_md_files = [f for f in files if f.lower().endswith('_origin.md')]
+            if not origin_md_files:
+                yield f'data: {json.dumps({"error": "Origin markdown file not found"})}\n\n'
+                return
+
+            origin_md_path = os.path.join(dir_path, origin_md_files[0])
+            base_name = os.path.splitext(origin_md_files[0])[0].replace('_origin', '')
+
+            with open(origin_md_path, 'r', encoding='utf-8') as f:
+                md_text = f.read()
+
+            yield f'data: {json.dumps({"status": "スレッド形式で解説中..."})}\n\n'
+            yield f'data: {json.dumps({"llm_output": "$=~=$start$=~=$"})}\n\n'
+            result_text = ""
+
+            with get_openai_callback() as cb:
+                chat_model = app.config["CHAT_MODEL"]
+                chat_model.temperature = 1
+                chat_model.streaming = True
+
+                system_prompt = SystemMessage(
+                    content=
+"""
+以下の論文内容に対してなんJの架空のスレを創造的に書いてください。
+
+[指示]
+・論文内容をしっかりと理解し、ステップバイステップで考えてください。
+・レス番や名前、投稿日時、IDも書き、アンカーは全角で＞＞と書いてください。 
+・10人以上の専門家と2人の初学者をスレ登場させて多角的に議論してください。
+・スレタイトルも考えて、30回以上やり取りしてください。
+・専門用語は適宜説明を入れてください。
+・論文の内容を正確に理解した上で、なんJ民らしい口調で解説してください。
+  ・例）～～やな。～～よな。～～んやね。～～わけや。～～するん？～～みるわ。
+・スレッドの形式は以下のようにしてください
+
+
+## 【スレタイ】(スレッドタイトル)
+
+
+### 1 名前：以下、名無しにかわりまして深層学習初学者がお送りします。 [yyyy/mm/dd(木) hh:mm:ss.ss] ID:xxXXxx0
+
+
+(スレ開始メッセージ)
+
+
+### 2 名前：△△ [yyyy/mm/dd(木) hh:mm:ss.ss] ID:yYyYyY1
+
+
+＞＞1
+
+
+（以下、レスが続く）
+
+
+"""
+                )
+                thread_message = HumanMessage(content=md_text)
+                messages = [system_prompt, thread_message]
+
+                for result in chat_model.stream(messages):
+                    result_text += result.content
+                    if result == '':
+                        continue
+                    yield f'data: {json.dumps({"llm_output": result.content})}\n\n'
+
+                print(f"\nTotal Tokens: {cb.total_tokens}")
+                print(f"Prompt Tokens: {cb.prompt_tokens}")
+                print(f"Completion Tokens: {cb.completion_tokens}")
+                print(f"Total Cost (USD): ${cb.total_cost}\n")
+
+            thread_md_filename = os.path.join(dir_path, f"{base_name}_thread.md")
+
+            result_text = result_text.replace("```markdown", "").replace("```", "")
+            with open(thread_md_filename, mode="w", encoding="utf-8") as f:
+                f.write(result_text)
+
+            yield f'data: {json.dumps({"llm_output": "$=~=$end$=~=$"})}\n\n'
+            yield f'data: {json.dumps({"status": "スレッド生成が完了しました"})}\n\n'
+
+        except Exception as e:
+            error_traceback = traceback.format_exc()
+            print(error_traceback)
+            yield f'data: {json.dumps({"error": f"Error during thread generation: {str(e)}"})}\n\n'
+            return
+
+    return Response(generate(), mimetype='text/event-stream')
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
