@@ -50,7 +50,7 @@ import Header from './Header';
 pdfjs.GlobalWorkerOptions.workerSrc = '/pdf.worker.js';
 
 const PaperPreview = () => {
-  // ① URL から username を取得し、navigate で画面遷移を行う
+  // URL から username を取得
   const { username } = useParams();
   const navigate = useNavigate();
 
@@ -90,8 +90,8 @@ const PaperPreview = () => {
   const [isAssistantTyping, setIsAssistantTyping] = useState(false);
 
   // セッション管理用
-  const [sessionId, setSessionId] = useState(null);             
-  const [chatSessions, setChatSessions] = useState([]);          
+  const [sessionId, setSessionId] = useState(null);
+  const [chatSessions, setChatSessions] = useState([]);
   const [restoredSessionId, setRestoredSessionId] = useState(null);
   const [isNewSession, setIsNewSession] = useState(false);
 
@@ -99,7 +99,7 @@ const PaperPreview = () => {
   const [showExplainButton, setShowExplainButton] = useState(true);
   const [showThreadButton, setShowThreadButton] = useState(true);
 
-  // PDF.js のコンテナ幅をアップデートする関数
+  // PDF.js のコンテナ幅をアップデート
   const updateContainerWidth = () => {
     if (pdfContainerRef.current) {
       const width = pdfContainerRef.current.offsetWidth;
@@ -109,7 +109,7 @@ const PaperPreview = () => {
     }
   };
 
-  // ディレクトリ一覧の取得 (本来はユーザー専用ディレクトリ一覧を取得するなど要変更)
+  // (1) ユーザー名を指定してディレクトリ一覧を取得
   const fetchDirectories = async () => {
     try {
       const response = await fetchWithTimeout(
@@ -134,7 +134,7 @@ const PaperPreview = () => {
     }
   };
 
-  // 指定のdir_nameに紐づくチャットセッション一覧を取得 (username必須)
+  // 指定のdir_nameに紐づくチャットセッション一覧を取得
   const fetchChatSessions = async (dirName) => {
     if (!username) return;
     try {
@@ -195,7 +195,7 @@ const PaperPreview = () => {
     }
   };
 
-  // 既存セッションを削除
+  // セッション削除
   const deleteChatSession = async (oldSessionId) => {
     if (!username) return;
     try {
@@ -244,7 +244,7 @@ const PaperPreview = () => {
     }
   };
 
-  // レイアウト計算：ページリサイズに応じてPDFコンテナ幅を更新
+  // レイアウト調整
   useLayoutEffect(() => {
     updateContainerWidth();
   }, [pdfToDisplay, selectedDirectory]);
@@ -317,7 +317,7 @@ const PaperPreview = () => {
     });
   };
 
-  // メッセージ送信処理
+  // メッセージ送信
   const handleSend = async () => {
     if (!message.trim() && pendingImages.length === 0) {
       return;
@@ -342,7 +342,7 @@ const PaperPreview = () => {
       setChatLoading(true);
       setIsAssistantTyping(true);
 
-      // 「復元したセッションID」で表示中かつ sessionIdがnull の場合は「削除→新規作成→過去ログ移し替え」
+      // セッション復元IDがあり、sessionIdがnullなら「削除→新規作成→過去ログ移し替え」
       let finalSessionId = sessionId;
       if (restoredSessionId && sessionId === null) {
         await deleteChatSession(restoredSessionId);
@@ -355,7 +355,7 @@ const PaperPreview = () => {
         setIsNewSession(false);
       }
 
-      // もし既存のsessionIdがなければ新規セッションを作成
+      // もし既存のsessionIdがなければ新規セッション作成
       let sessionWasNewlyCreated = false;
       if (!finalSessionId) {
         finalSessionId = await createNewSession(selectedDirectory);
@@ -364,7 +364,7 @@ const PaperPreview = () => {
         setIsNewSession(true);
       }
 
-      // (1) フロント表示にユーザー入力を反映
+      // フロント表示にユーザー入力を反映
       const newChatMessages = [];
       if (currentMessage) {
         newChatMessages.push({
@@ -382,7 +382,7 @@ const PaperPreview = () => {
       }
       setChat((prev) => [...prev, ...newChatMessages]);
 
-      // (2) LLMに送るための配列を作り、Base64変換等を行う
+      // LLMに送るための配列を作り、Base64変換等
       const contentArray = [];
       if (currentMessage) {
         contentArray.push({
@@ -401,7 +401,7 @@ const PaperPreview = () => {
       }
       setPendingImages([]);
 
-      // (3) scholar_agent へ問い合わせ
+      // scholar_agent へ問い合わせ
       if (contentArray.length > 0) {
         const newAgentState = { ...agentState };
         const userContentJson = JSON.stringify(contentArray);
@@ -443,7 +443,7 @@ const PaperPreview = () => {
           setRestoredSessionId(finalSessionId);
         }
       } else {
-        // 画像もテキストも無い時
+        // 画像もテキストもないとき
         if (sessionWasNewlyCreated) {
           await fetchChatSessions(selectedDirectory);
           setRestoredSessionId(finalSessionId);
@@ -468,9 +468,11 @@ const PaperPreview = () => {
       setPendingImages([...pendingImages, ...newImages]);
     }
   };
+
   const handleRemoveImage = (index) => {
     setPendingImages((prev) => prev.filter((_, i) => i !== index));
   };
+
   const handlePaste = (e) => {
     const items = e.clipboardData.items;
     const images = [];
@@ -488,60 +490,18 @@ const PaperPreview = () => {
     }
   };
 
-  // PDF読み込み時のコールバック
+  // PDF読み込み
   function onDocumentLoadSuccess({ numPages }) {
     setNumPages(numPages);
     updateContainerWidth();
   }
 
-  // ズームイン／アウト
+  // ズーム
   const handleZoomIn = () => {
-    if (pdfContainerRef.current) {
-      const container = pdfContainerRef.current;
-      const beforeHeight = container.scrollHeight;
-      const beforeWidth = container.scrollWidth;
-      const beforeScrollTop = container.scrollTop;
-      const beforeScrollLeft = container.scrollLeft;
-      const containerHeight = container.clientHeight;
-      const containerWidth = container.clientWidth;
-      const scrollRatioY = (beforeScrollTop + containerHeight / 2) / beforeHeight;
-      const scrollRatioX = (beforeScrollLeft + containerWidth / 2) / beforeWidth;
-      
-      setScale((prevScale) => {
-        const newScale = Math.min(prevScale + 0.2, 3.0);
-        setTimeout(() => {
-          const afterHeight = container.scrollHeight;
-          const afterWidth = container.scrollWidth;
-          container.scrollTop = scrollRatioY * afterHeight - containerHeight / 2;
-          container.scrollLeft = scrollRatioX * afterWidth - containerWidth / 2;
-        }, 0);
-        return newScale;
-      });
-    }
+    setScale((prevScale) => Math.min(prevScale + 0.2, 3.0));
   };
   const handleZoomOut = () => {
-    if (pdfContainerRef.current) {
-      const container = pdfContainerRef.current;
-      const beforeHeight = container.scrollHeight;
-      const beforeWidth = container.scrollWidth;
-      const beforeScrollTop = container.scrollTop;
-      const beforeScrollLeft = container.scrollLeft;
-      const containerHeight = container.clientHeight;
-      const containerWidth = container.clientWidth;
-      const scrollRatioY = (beforeScrollTop + containerHeight / 2) / beforeHeight;
-      const scrollRatioX = (beforeScrollLeft + containerWidth / 2) / beforeWidth;
-      
-      setScale((prevScale) => {
-        const newScale = Math.max(prevScale - 0.2, 0.5);
-        setTimeout(() => {
-          const afterHeight = container.scrollHeight;
-          const afterWidth = container.scrollWidth;
-          container.scrollTop = scrollRatioY * afterHeight - containerHeight / 2;
-          container.scrollLeft = scrollRatioX * afterWidth - containerWidth / 2;
-        }, 0);
-        return newScale;
-      });
-    }
+    setScale((prevScale) => Math.max(prevScale - 0.2, 0.5));
   };
 
   // プレビュー領域のスクロール制御
@@ -555,7 +515,7 @@ const PaperPreview = () => {
     }
   }, [content, isAppending]);
 
-  // (1) PDF/URLでpdf2markdownする処理
+  // PDF/URLでpdf2markdown
   useEffect(() => {
     const processPdf = async () => {
       if (!pdfToDisplay) return;
@@ -580,7 +540,7 @@ const PaperPreview = () => {
           setRestoredSessionId(null);
           setIsNewSession(false);
 
-          const url = `http://${import.meta.env.VITE_APP_IP}:5601/pdf2markdown`;
+          const url = `http://${import.meta.env.VITE_APP_IP}:5601/pdf2markdown?username=${username}`;
           let options = {
             method: 'POST',
             mode: 'cors',
@@ -747,7 +707,7 @@ const PaperPreview = () => {
     processPdf();
   }, [pdfToDisplay]);
 
-  // (2) ディレクトリ選択時
+  // ディレクトリ選択時
   useEffect(() => {
     const processDirectory = async () => {
       if (!selectedDirectory) return;
@@ -867,7 +827,7 @@ const PaperPreview = () => {
     setSidebarOpen((prev) => !prev);
   };
 
-  // ディレクトリ選択時のハンドラ
+  // ディレクトリ選択時
   const handleSelectDirectory = (dirName) => {
     setSelectedDirectory(dirName);
     setPdfToDisplay(null);
@@ -1147,6 +1107,7 @@ const PaperPreview = () => {
       }
 
       let markdownContent = await markdownResponse.text();
+      // 画像パスをフルURLに変換
       markdownContent = markdownContent
         .replace(
           /!\[Local Image\]\(picture-(\d+)\.png\)/g,
@@ -1372,7 +1333,7 @@ const PaperPreview = () => {
                   setProcessingStatus('');
                   setCurrentMarkdownType('thread');
                   setShowThreadButton(false);
-                  // ここで _thread.md を再読み込み
+                  // 生成完了後に _thread.md を再取得
                   await fetchMarkdownContent(selectedDirectory, baseFileName, 'thread');
                 } else if (inLLMOutput) {
                   setContent((prevContent) => prevContent + data.llm_output);
@@ -1392,9 +1353,9 @@ const PaperPreview = () => {
     }
   };
 
-  // ログアウト（シンプルに /login へ移動）
+  // ログアウト
   const handleLogout = () => {
-    // 本来はCookie/Session/Token破棄や localStorage.clear() 等も必要
+    // sessionStorage/localStorageのクリアやToken破棄など適宜
     navigate('/login');
   };
 
@@ -1413,7 +1374,7 @@ const PaperPreview = () => {
         selectedDirectory={selectedDirectory}
         onRequestDeleteDirectory={handleRequestDeleteDirectory}
         username={username}
-        onLogout={handleLogout}   
+        onLogout={handleLogout}
       />
       <Header
         onPdfSelect={(pdf) => {
@@ -1450,7 +1411,7 @@ const PaperPreview = () => {
           direction="horizontal"
           cursor="col-resize"
         >
-          {/* 左ペイン（PDFビューア） */}
+          {/* 左ペイン (PDFビューア) */}
           <div className="flex flex-col">
             {pdfToDisplay ? (
               <>
@@ -1513,7 +1474,7 @@ const PaperPreview = () => {
             )}
           </div>
 
-          {/* 中央ペイン（マークダウンエディタ/プレビュー） */}
+          {/* 中央ペイン (マークダウンエディタ/プレビュー) */}
           <div className="flex flex-col relative">
             <Tabs
               value={activeTab}
@@ -1521,7 +1482,6 @@ const PaperPreview = () => {
               className="h-full pb-3"
             >
               <div className="flex justify-between items-center mb-2">
-                {/* ▼▼▼ pdfToDisplay が null のときは操作ボタン非表示 ▼▼▼ */}
                 {pdfToDisplay && (
                   <div className="flex space-x-2">
                     <Button
@@ -1549,7 +1509,7 @@ const PaperPreview = () => {
                         日本語訳
                       </Button>
                     )}
-                    {/* 解説ボタン */}
+
                     {showExplainButton ? (
                       <Button
                         variant="secondary"
@@ -1567,7 +1527,7 @@ const PaperPreview = () => {
                         解説
                       </Button>
                     )}
-                    {/* スレボタン */}
+
                     {showThreadButton ? (
                       <Button
                         variant="secondary"
@@ -1604,8 +1564,9 @@ const PaperPreview = () => {
                       <TabsTrigger value="edit">編集モード</TabsTrigger>
                       <TabsTrigger value="preview">プレビューモード</TabsTrigger>
                     </TabsList>
-                  ) : (<div className='mt-9'></div>)
-                  }
+                  ) : (
+                    <div className='mt-9'></div>
+                  )}
                 </div>
               </div>
 
@@ -1653,7 +1614,7 @@ const PaperPreview = () => {
             </Tabs>
           </div>
 
-          {/* 右ペイン（チャットエリア） */}
+          {/* 右ペイン (チャットエリア) */}
           <div className="flex flex-col">
             <div className="pb-[10px] flex justify-between items-center">
               {/* チャットセッション一覧セレクト */}

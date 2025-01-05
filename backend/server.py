@@ -43,14 +43,14 @@ CORS(app)
 app.config["CHAT_MODEL"] = None
 
 ########################################################################
-# 変更点①: CONTENT_DATA_DIR を /home/ubuntu/workspace/users に変更
-#          (ユーザー別ディレクトリ管理)
+# ① CONTENT_DATA_DIR を /home/ubuntu/workspace/users に変更
+#    (ユーザー別ディレクトリ管理)
 ########################################################################
 CONTENT_DATA_DIR = "/home/ubuntu/workspace/users"
 os.makedirs(CONTENT_DATA_DIR, exist_ok=True)
 
 ########################################################################
-# 変更点②: ユーザーごとに chat_history.db を作るためのヘルパー
+# ② ユーザーごとに chat_history.db を作るためのヘルパー
 ########################################################################
 def get_user_dir(username: str):
     """
@@ -96,7 +96,7 @@ def ensure_user_db_exists(username: str):
     conn.close()
 
 ########################################################################
-# 変更点③: ユーザー新規/既存を確認するエンドポイント
+# ③ ユーザー新規/既存を確認するエンドポイント
 ########################################################################
 @app.route('/check_user', methods=['GET'])
 def check_user():
@@ -136,7 +136,7 @@ def create_user():
         return jsonify({"message": "User created."}), 200
 
 ########################################################################
-# 以下、チャットセッション系のテーブル操作
+# チャットセッション系のテーブル操作
 ########################################################################
 def remove_oldest_session_if_needed(db_cursor, dir_name):
     """
@@ -349,8 +349,8 @@ def save_chat_message(username, session_id, role, content):
 def serve_content_files(filename):
     """
     contents ディレクトリからファイルを提供するエンドポイント。
-    ただし今回は /home/ubuntu/workspace/users/<username>/... を使う想定。
-    filename が "username/dir_name/xxx.pdf" みたいになっている場合を想定。
+    ただし今回は /home/ubuntu/workspace/users/<username>/... を想定。
+    filename が "username/dir_name/xxx.pdf" などの形を許容。
     """
     try:
         # 安全なパス判定
@@ -365,10 +365,9 @@ def serve_content_files(filename):
 def list_files(dir_name):
     """
     指定ディレクトリ内のPDFとMarkdownを返す。
-    本来は username/論文ディレクトリ という構造を想定。
+    例: dir_name = "alice/20230701010101_myPaper"
     """
     try:
-        # dir_name は "username/xxxx" のように受け取るケースを想定
         dir_path = os.path.join(CONTENT_DATA_DIR, dir_name)
         if not os.path.isdir(dir_path):
             return jsonify({'error': 'Directory not found'}), 404
@@ -417,7 +416,7 @@ def list_contents():
         directories = []
         for dir_path in dir_paths_sorted:
             d = os.path.basename(dir_path)
-            # 必要に応じて表示名の加工を行う
+            # 必要に応じて表示名の加工を行う (例: timestamp_XXXX → XXXX)
             parts = d.split('_', 1)
             if len(parts) == 2:
                 display_name = parts[1]
@@ -443,65 +442,56 @@ def pdf2markdown():
     PDFファイルを受け取り（またはURL）、Markdownへ変換。
     SSE (Server-Sent Events)で進捗を返す。
     """
+    username = request.args.get('username')
+    if not username:
+        return jsonify({"error": "username is required"}), 400
+    
     @stream_with_context
     def generate():
         pdf_stream = None
-        base_file_name = ''
+        file_name = ""
         try:
             if 'file' in request.files:
                 pdf_file = request.files['file']
                 file_name = pdf_file.filename
-                base_file_name = os.path.splitext(file_name)[0]
                 pdf_stream = pdf_file.stream
             elif request.is_json and 'url' in request.json:
                 pdf_url = request.json['url']
                 file_name = os.path.basename(pdf_url)
                 if not file_name.lower().endswith('.pdf'):
                     file_name += '.pdf'
-                base_file_name = os.path.splitext(file_name)[0]
                 response = requests.get(pdf_url)
                 response.raise_for_status()
                 pdf_stream = BytesIO(response.content)
             else:
                 raise ValueError("No valid PDF file or URL provided")
-        except ValueError as ve:
-            yield f'data: {json.dumps({"error": str(ve)})}\n\n'
-            return
-        except requests.exceptions.RequestException as e:
-            yield f'data: {json.dumps({"error": f"Failed to fetch PDF from URL: {str(e)}"})}\n\n'
-            return
         except Exception as e:
-            yield f'data: {json.dumps({"error": f"Unexpected error during data retrieval: {str(e)}"})}\n\n'
+            yield f'data: {json.dumps({"error": str(e)})}\n\n'
             return
 
+        # PDF -> Markdown (SSE)
         try:
-            for message in extract_text_from_pdf(pdf_stream, file_name):
+            for message in extract_text_from_pdf(pdf_stream, file_name, username):
                 yield f'data: {message}\n\n'
         except Exception as e:
-            error_traceback = traceback.format_exc()
-            print(error_traceback)
-            yield f'data: {json.dumps({"error": f"Error extracting text from PDF: {str(e)}"})}\n\n'
-            return
+            traceback.print_exc()
+            yield f'data: {json.dumps({"error": f"Error extracting text: {str(e)}"})}\n\n'
 
     return Response(generate(), mimetype='text/event-stream')
 
-def extract_text_from_pdf(pdf_stream, file_name):
+def extract_text_from_pdf(pdf_stream, file_name, username):
     """
     PDFを解析し、Markdownに変換（+ 画像を保存）する処理。
     SSE進捗を返すため、ジェネレータを使う。
     """
-    start_time = time.time()
-
     base_name = os.path.splitext(file_name)[0]
     timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
     dir_name = f"{timestamp}_{base_name}"
 
-    # -----------------------------------------------
-    # ここは本来 "username/<dir_name>" を作る等にしたい場合は
-    # さらに username パラメータが必要
-    # (サンプルでは既存コードのまま、一括で users直下に dir_name を作成)
-    # -----------------------------------------------
-    output_dir = os.path.join(CONTENT_DATA_DIR, dir_name)
+    user_dir = os.path.join(CONTENT_DATA_DIR, username)
+    os.makedirs(user_dir, exist_ok=True)
+
+    output_dir = os.path.join(user_dir, dir_name)
     os.makedirs(output_dir, exist_ok=True)
 
     yield json.dumps({"status": "PDFファイルの保存中..."})
@@ -588,17 +578,14 @@ def extract_text_from_pdf(pdf_stream, file_name):
         f.write(result_text)
 
     yield json.dumps({"llm_output": "$=~=$end$=~=$"})
-    yield json.dumps({"dir_name": dir_name, "base_file_name": base_name})
+    # ここで "username/dir_name" を返すことで list_files/username/dir_name で取得可能
+    yield json.dumps({"dir_name": f"{username}/{dir_name}", "base_file_name": base_name})
 
 ########################################################################
 # 日本語翻訳
 ########################################################################
 @app.route('/trans_markdown', methods=['POST'])
 def trans_markdown():
-    """
-    origin.md を 日本語に翻訳して _trans.md を作成。
-    SSE (Server-Sent Events)で進捗を返す。
-    """
     @stream_with_context
     def generate():
         try:
@@ -678,9 +665,6 @@ def trans_markdown():
 ########################################################################
 @app.route('/save_markdown', methods=['POST'])
 def save_markdown():
-    """
-    指定ディレクトリ下の Markdown ファイルを上書き保存。
-    """
     try:
         data = request.get_json()
         dir_name = data.get('dir_name')
@@ -690,10 +674,10 @@ def save_markdown():
         if not dir_name or not file_name or content is None:
             return jsonify({'error': 'dir_name, file_name, and content are required.'}), 400
 
-        if '..' in dir_name or '/' in dir_name or '\\' in dir_name:
+        # '/' は許容するが '..' と '\\' は禁止 (上位ディレクトリやバックスラッシュ)
+        if '..' in dir_name or '\\' in dir_name:
             return jsonify({'error': 'Invalid directory name.'}), 400
-
-        if '..' in file_name or '/' in file_name or '\\' in file_name:
+        if '..' in file_name or '\\' in file_name:
             return jsonify({'error': 'Invalid file name.'}), 400
 
         if not file_name.lower().endswith('.md'):
@@ -719,7 +703,7 @@ def save_markdown():
 @app.route('/delete_directory', methods=['POST'])
 def delete_directory():
     """
-    指定ディレクトリごと削除。
+    指定ディレクトリごと削除 (username/subdir も可)。
     """
     try:
         data = request.get_json()
@@ -727,7 +711,8 @@ def delete_directory():
         if not dir_name:
             return jsonify({'error': 'dir_name is required.'}), 400
 
-        if '..' in dir_name or '/' in dir_name or '\\' in dir_name:
+        # '/'は許可、'..'と'\\'は禁止に修正
+        if '..' in dir_name or '\\' in dir_name:
             return jsonify({'error': 'Invalid directory name.'}), 400
 
         target_dir = os.path.join(CONTENT_DATA_DIR, dir_name)
@@ -747,22 +732,17 @@ def delete_directory():
 ########################################################################
 @app.route('/initialize_state', methods=['GET'])
 def initialize_state():
-    """
-    指定ディレクトリ内の _origin.md をLLM用の初期状態として読み込む。
-    """
     input_dir_param = request.args.get('input_dir')
     if not input_dir_param:
         return jsonify({"error": "input_dir パラメータが必要です。"}), 400
 
-    # (1) '/' のチェックを外し、 '..' と '\\' だけを禁止
+    # '/' を許容し、 '..' や '\\' を禁止
     if '..' in input_dir_param or '\\' in input_dir_param:
         return jsonify({'error': 'Invalid directory name.'}), 400
-    
-    # (2) ここで "username/subdir" の形も許容
+
     input_dir = os.path.join(CONTENT_DATA_DIR, input_dir_param)
     if not os.path.isdir(input_dir):
         return jsonify({"error": f"指定されたディレクトリが存在しません: {input_dir_param}"}), 400
-
 
     md_files = [f for f in os.listdir(input_dir) if f.endswith('_origin.md')]
     if not md_files:
@@ -833,9 +813,6 @@ class State(TypedDict):
     messages: Annotated[list, add_messages]
 
 def initialize_agent():
-    """
-    langgraphでStateGraphを構築し、Flask の config["CHAT_MODEL"] を使う。
-    """
     graph_builder = StateGraph(State)
 
     def chatbot(state: State):
@@ -863,17 +840,12 @@ def initialize_agent():
 ########################################################################
 @app.route('/scholar_agent', methods=['POST'])
 def scholar_agent():
-    """
-    user_input 内に画像やテキストを含め、LLMへ渡す。
-    DBには user_input(JSON文字列) をそのまま保存。
-    実際にLLMには、画像もテキストもまとめて1つの文字列にして入力。
-    """
     data = request.get_json()
     if not data:
         return jsonify({"error": "JSONペイロードが必要です。"}), 400
 
     state = data.get('state')
-    user_input = data.get('user_input')  # JSON文字列
+    user_input = data.get('user_input')
     session_id = data.get('session_id')
     username = data.get('username')
 
@@ -942,14 +914,15 @@ def scholar_agent():
 @app.route('/download_directory', methods=['GET'])
 def download_directory():
     """
-    指定ディレクトリをzipファイルとしてダウンロード
+    指定ディレクトリをzipファイルとしてダウンロード (username/subdirも可)。
     """
     try:
         dir_name = request.args.get('dir_name')
         if not dir_name:
             return jsonify({'error': 'dir_name is required.'}), 400
 
-        if '..' in dir_name or '/' in dir_name or '\\' in dir_name:
+        # '/' を許容、'..' と '\\' を禁止にする
+        if '..' in dir_name or '\\' in dir_name:
             return jsonify({'error': 'Invalid directory name.'}), 400
 
         target_dir = os.path.join(CONTENT_DATA_DIR, dir_name)
@@ -982,10 +955,6 @@ def download_directory():
 ########################################################################
 @app.route('/explain_paper', methods=['POST'])
 def explain_paper():
-    """
-    論文の内容を解説するマークダウンを生成。
-    SSE (Server-Sent Events)で進捗を返す。
-    """
     @stream_with_context
     def generate():
         try:
@@ -1081,10 +1050,6 @@ def explain_paper():
 ########################################################################
 @app.route('/thread_paper', methods=['POST'])
 def thread_paper():
-    """
-    論文の内容をなんJスレッド形式で解説するマークダウンを生成。
-    SSE (Server-Sent Events)で進捗を返す。
-    """
     @stream_with_context
     def generate():
         try:
