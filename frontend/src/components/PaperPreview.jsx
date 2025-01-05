@@ -1,6 +1,7 @@
 // src/components/PaperPreview.jsx
 
 import React, { useState, useEffect, useRef, useLayoutEffect } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
 
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -49,12 +50,15 @@ import Header from './Header';
 pdfjs.GlobalWorkerOptions.workerSrc = '/pdf.worker.js';
 
 const PaperPreview = () => {
+  // ① URL から username を取得し、navigate で画面遷移を行う
+  const { username } = useParams();
+  const navigate = useNavigate();
+
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   const [content, setContent] = useState('');
   const [message, setMessage] = useState('');
   const [chat, setChat] = useState([]);
-  // 画像を一時的に保管するステート
   const [pendingImages, setPendingImages] = useState([]);
 
   const [pdfToDisplay, setPdfToDisplay] = useState(null);
@@ -105,11 +109,11 @@ const PaperPreview = () => {
     }
   };
 
-  // ディレクトリ一覧の取得
+  // ディレクトリ一覧の取得 (本来はユーザー専用ディレクトリ一覧を取得するなど要変更)
   const fetchDirectories = async () => {
     try {
       const response = await fetchWithTimeout(
-        `http://${import.meta.env.VITE_APP_IP}:5601/list_contents`,
+        `http://${import.meta.env.VITE_APP_IP}:5601/list_contents?username=${username}`,
         {
           method: 'GET',
           mode: 'cors',
@@ -130,11 +134,12 @@ const PaperPreview = () => {
     }
   };
 
-  // 指定のdir_nameに紐づくチャットセッション一覧を取得
+  // 指定のdir_nameに紐づくチャットセッション一覧を取得 (username必須)
   const fetchChatSessions = async (dirName) => {
+    if (!username) return;
     try {
       const res = await fetch(
-        `http://${import.meta.env.VITE_APP_IP}:5601/list_chat_sessions?dir_name=${encodeURIComponent(dirName)}`,
+        `http://${import.meta.env.VITE_APP_IP}:5601/list_chat_sessions?username=${username}&dir_name=${encodeURIComponent(dirName)}`,
         { method: 'GET', mode: 'cors' }
       );
       if (!res.ok) {
@@ -151,9 +156,10 @@ const PaperPreview = () => {
 
   // セッションIDを指定してメッセージを復元
   const fetchChatHistory = async (sessionIdToLoad) => {
+    if (!username) return;
     try {
       const res = await fetch(
-        `http://${import.meta.env.VITE_APP_IP}:5601/get_chat_history?session_id=${sessionIdToLoad}`,
+        `http://${import.meta.env.VITE_APP_IP}:5601/get_chat_history?username=${username}&session_id=${sessionIdToLoad}`,
         { method: 'GET', mode: 'cors' }
       );
       if (!res.ok) {
@@ -170,9 +176,10 @@ const PaperPreview = () => {
 
   // 新しいセッションを作成
   const createNewSession = async (dirName) => {
+    if (!username) return null;
     try {
       const res = await fetch(
-        `http://${import.meta.env.VITE_APP_IP}:5601/create_chat_session?dir_name=${encodeURIComponent(dirName)}`,
+        `http://${import.meta.env.VITE_APP_IP}:5601/create_chat_session?username=${username}&dir_name=${encodeURIComponent(dirName)}`,
         { method: 'POST', mode: 'cors' }
       );
       if (!res.ok) {
@@ -190,12 +197,13 @@ const PaperPreview = () => {
 
   // 既存セッションを削除
   const deleteChatSession = async (oldSessionId) => {
+    if (!username) return;
     try {
       const res = await fetch(`http://${import.meta.env.VITE_APP_IP}:5601/delete_chat_session`, {
         method: 'POST',
         mode: 'cors',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ session_id: oldSessionId }),
+        body: JSON.stringify({ session_id: oldSessionId, username }),
       });
       if (!res.ok) {
         const errorData = await res.json();
@@ -210,12 +218,14 @@ const PaperPreview = () => {
 
   // まとめてメッセージを挿入(旧チャット含めて新セッションに再保存)
   const bulkSaveChat = async (newSessId, messages) => {
+    if (!username) return;
     try {
       const res = await fetch(`http://${import.meta.env.VITE_APP_IP}:5601/bulk_save_chat`, {
         method: 'POST',
         mode: 'cors',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          username,
           session_id: newSessId,
           messages: messages.map((m) => ({
             role: m.role,
@@ -234,7 +244,7 @@ const PaperPreview = () => {
     }
   };
 
-  // ページリサイズに応じてコンテナ幅をアップデート
+  // レイアウト計算：ページリサイズに応じてPDFコンテナ幅を更新
   useLayoutEffect(() => {
     updateContainerWidth();
   }, [pdfToDisplay, selectedDirectory]);
@@ -310,7 +320,6 @@ const PaperPreview = () => {
   // メッセージ送信処理
   const handleSend = async () => {
     if (!message.trim() && pendingImages.length === 0) {
-      // 何も送るものがない
       return;
     }
     if (!selectedDirectory) {
@@ -319,6 +328,10 @@ const PaperPreview = () => {
     }
     if (!agentState) {
       alert('エージェントが初期化されていません');
+      return;
+    }
+    if (!username) {
+      alert('ユーザー名が不明です。ログインし直してください。');
       return;
     }
 
@@ -351,7 +364,7 @@ const PaperPreview = () => {
         setIsNewSession(true);
       }
 
-      // 1) まずフロント表示にユーザー入力を反映
+      // (1) フロント表示にユーザー入力を反映
       const newChatMessages = [];
       if (currentMessage) {
         newChatMessages.push({
@@ -369,7 +382,7 @@ const PaperPreview = () => {
       }
       setChat((prev) => [...prev, ...newChatMessages]);
 
-      // 2) LLMに送るための配列を作り、Base64変換等を行う
+      // (2) LLMに送るための配列を作り、Base64変換等を行う
       const contentArray = [];
       if (currentMessage) {
         contentArray.push({
@@ -388,7 +401,7 @@ const PaperPreview = () => {
       }
       setPendingImages([]);
 
-      // 3) scholar_agent へ問い合わせ
+      // (3) scholar_agent へ問い合わせ
       if (contentArray.length > 0) {
         const newAgentState = { ...agentState };
         const userContentJson = JSON.stringify(contentArray);
@@ -401,6 +414,7 @@ const PaperPreview = () => {
             state: newAgentState,
             user_input: userContentJson,
             session_id: finalSessionId,
+            username: username,
           }),
         });
 
@@ -423,12 +437,13 @@ const PaperPreview = () => {
           },
         ]);
 
-        // 新規セッションなら、最初の応答時にセッション一覧を更新
+        // 新規セッションなら最初の応答時にセッション一覧を更新
         if (sessionWasNewlyCreated) {
           await fetchChatSessions(selectedDirectory);
           setRestoredSessionId(finalSessionId);
         }
       } else {
+        // 画像もテキストも無い時
         if (sessionWasNewlyCreated) {
           await fetchChatSessions(selectedDirectory);
           setRestoredSessionId(finalSessionId);
@@ -445,7 +460,7 @@ const PaperPreview = () => {
     }
   };
 
-  // 画像アップロード前の一時プレビュー削除
+  // 画像アップロード
   const handleImageUpload = (e) => {
     const files = e.target.files;
     if (files) {
@@ -540,7 +555,7 @@ const PaperPreview = () => {
     }
   }, [content, isAppending]);
 
-  // (1) PDF選択 or URL指定でPDF->Markdown変換
+  // (1) PDF/URLでpdf2markdownする処理
   useEffect(() => {
     const processPdf = async () => {
       if (!pdfToDisplay) return;
@@ -686,7 +701,6 @@ const PaperPreview = () => {
           setSelectedDirectory(dirName);
           setBaseFileName(baseFileName);
 
-          // _trans.md
           const transMarkdownFile = markdownFiles.find((name) =>
             name.endsWith('_trans.md')
           );
@@ -698,7 +712,6 @@ const PaperPreview = () => {
             setShowTranslateButton(true);
           }
 
-          // _explain.md
           const explainMarkdownFile = markdownFiles.find((name) =>
             name.endsWith('_explain.md')
           );
@@ -708,7 +721,6 @@ const PaperPreview = () => {
             setShowExplainButton(true);
           }
 
-          // _thread.md
           const threadMarkdownFile = markdownFiles.find((name) =>
             name.endsWith('_thread.md')
           );
@@ -790,7 +802,6 @@ const PaperPreview = () => {
           );
         }
 
-        // origin.md
         const originMarkdownFile = markdownFiles.find((name) =>
           name.endsWith('_origin.md')
         );
@@ -803,7 +814,6 @@ const PaperPreview = () => {
         const baseFileName = originMarkdownFile.replace('_origin.md', '');
         setBaseFileName(baseFileName);
 
-        // _trans.md
         const transMarkdownFile = markdownFiles.find((name) =>
           name.endsWith('_trans.md')
         );
@@ -815,7 +825,6 @@ const PaperPreview = () => {
           setShowTranslateButton(true);
         }
 
-        // _explain.md
         const explainMarkdownFile = markdownFiles.find((name) =>
           name.endsWith('_explain.md')
         );
@@ -825,7 +834,6 @@ const PaperPreview = () => {
           setShowExplainButton(true);
         }
 
-        // _thread.md
         const threadMarkdownFile = markdownFiles.find((name) =>
           name.endsWith('_thread.md')
         );
@@ -840,7 +848,6 @@ const PaperPreview = () => {
           url: `http://${import.meta.env.VITE_APP_IP}:5601/contents/${dirName}/${pdfFileName}`,
         });
 
-        // マークダウンの内容を取得
         await fetchMarkdownContent(dirName, baseFileName, 'origin');
         await fetchAgentState(dirName);
         await fetchChatSessions(dirName);
@@ -1365,7 +1372,7 @@ const PaperPreview = () => {
                   setProcessingStatus('');
                   setCurrentMarkdownType('thread');
                   setShowThreadButton(false);
-                  // ここで _thread.md を再読み込み（追加の処理）
+                  // ここで _thread.md を再読み込み
                   await fetchMarkdownContent(selectedDirectory, baseFileName, 'thread');
                 } else if (inLLMOutput) {
                   setContent((prevContent) => prevContent + data.llm_output);
@@ -1385,6 +1392,12 @@ const PaperPreview = () => {
     }
   };
 
+  // ログアウト（シンプルに /login へ移動）
+  const handleLogout = () => {
+    // 本来はCookie/Session/Token破棄や localStorage.clear() 等も必要
+    navigate('/login');
+  };
+
   return (
     <div
       className={`min-h-screen bg-gray-100 transition-transform duration-300 ${
@@ -1399,6 +1412,8 @@ const PaperPreview = () => {
         onSelectDirectory={handleSelectDirectory}
         selectedDirectory={selectedDirectory}
         onRequestDeleteDirectory={handleRequestDeleteDirectory}
+        username={username}
+        onLogout={handleLogout}   
       />
       <Header
         onPdfSelect={(pdf) => {
@@ -1506,7 +1521,7 @@ const PaperPreview = () => {
               className="h-full pb-3"
             >
               <div className="flex justify-between items-center mb-2">
-                {/* ▼▼▼ ここで pdfToDisplay が null のときはボタンを非表示 ▼▼▼ */}
+                {/* ▼▼▼ pdfToDisplay が null のときは操作ボタン非表示 ▼▼▼ */}
                 {pdfToDisplay && (
                   <div className="flex space-x-2">
                     <Button

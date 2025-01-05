@@ -10,11 +10,14 @@ const Sidebar = ({
   onSelectDirectory,
   selectedDirectory,
   onRequestDeleteDirectory,
+  username,   // 追加: ユーザー名
+  onLogout,   // 追加: ログアウトボタン押下時のハンドラ
 }) => {
-  const [popupDir, setPopupDir] = useState(null); // ポップアップを表示するディレクトリ
-  const [popupPosition, setPopupPosition] = useState({ top: 0, left: 0 }); // ポップアップの位置
+  const [popupDir, setPopupDir] = useState(null); // ポップアップを表示するディレクトリ名
+  const [popupPosition, setPopupPosition] = useState({ top: 0, left: 0 }); // ポップアップの表示位置
   const popupRef = useRef(null);
 
+  // ポップアップ領域外クリックで閉じる処理
   useEffect(() => {
     const handleClickOutside = (event) => {
       if (popupRef.current && !popupRef.current.contains(event.target)) {
@@ -33,6 +36,7 @@ const Sidebar = ({
     };
   }, [popupDir]);
 
+  // 「…(More)」ボタンを押したときにポップアップを表示
   const handleMoreButtonClick = (event, dirName) => {
     const buttonRect = event.currentTarget.getBoundingClientRect();
     setPopupPosition({
@@ -42,6 +46,7 @@ const Sidebar = ({
     setPopupDir(dirName);
   };
 
+  // ディレクトリを zip でダウンロード
   const handleDownload = async (dirName) => {
     try {
       const response = await fetch(
@@ -57,19 +62,17 @@ const Sidebar = ({
         throw new Error(errorData.error || 'ダウンロードに失敗しました');
       }
 
-      // レスポンスをBlobとして取得
+      // レスポンスを Blob として取得
       const blob = await response.blob();
-      
-      // ダウンロードリンクを作成
+
+      // ダウンロード用リンクを作成してクリック
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
       a.download = `${dirName}.zip`;
-      
-      // リンクをクリックしてダウンロード開始
       document.body.appendChild(a);
       a.click();
-      
+
       // 後処理
       window.URL.revokeObjectURL(url);
       document.body.removeChild(a);
@@ -87,34 +90,39 @@ const Sidebar = ({
       }`}
       style={{ width: '250px', zIndex: 1000 }}
     >
+      {/* サイドバー上部 */}
       <div className="flex items-center p-4 bg-gray-900">
         <button onClick={onToggle} className="focus:outline-none text-white">
           <Menu className="h-7 w-6" />
         </button>
       </div>
+
+      {/* ディレクトリ一覧 */}
       <div className="p-4 space-y-2 overflow-y-auto">
         {directories.length === 0 ? (
           <p>ディレクトリがありません</p>
         ) : (
           directories.map((dir) => (
-            <div key={dir.dir_name} className="flex items-center justify-between relative">
+            <div
+              key={dir.dir_name}
+              className="flex items-center justify-between relative"
+            >
               <div
                 className={`flex items-center justify-between flex-1 text-left px-2 py-1 rounded ${
                   dir.dir_name === selectedDirectory
                     ? 'bg-gray-600'
                     : 'hover:bg-gray-700'
                 }`}
-                style={{ maxWidth: '220px' }} // 最大幅を指定
+                style={{ maxWidth: '220px' }} // 文字が長い場合の折り返し対応
               >
                 <button
-                  key={dir.dir_name}
                   onClick={() => {
                     if (dir.dir_name !== selectedDirectory) {
-                      onSelectDirectory(dir.dir_name);
+                      onSelectDirectory(`${username}/${dir.dir_name}`);
                     }
                   }}
                   className="text-ellipsis overflow-hidden whitespace-nowrap flex-1 text-left"
-                  style={{ minWidth: 0 }} // 必須: 子要素のサイズ調整を効かせる
+                  style={{ minWidth: 0 }}
                 >
                   {dir.display_name}
                 </button>
@@ -130,6 +138,7 @@ const Sidebar = ({
         )}
       </div>
 
+      {/* ポップアップメニュー (「保存」「削除」) */}
       {popupDir && (
         <div
           ref={popupRef}
@@ -158,6 +167,17 @@ const Sidebar = ({
           </button>
         </div>
       )}
+
+      {/* サイドバー下部にユーザー名とログアウトボタン */}
+      <div className="absolute bottom-0 left-0 w-full p-4 bg-gray-900 flex items-center justify-between">
+        <span className="truncate">{username}</span>
+        <button
+          onClick={onLogout}
+          className="bg-red-600 px-3 py-1 text-white rounded"
+        >
+          ログアウト
+        </button>
+      </div>
     </div>
   );
 };
