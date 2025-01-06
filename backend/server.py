@@ -98,6 +98,21 @@ def ensure_user_db_exists(username: str):
 ########################################################################
 # ③ ユーザー新規/既存を確認するエンドポイント
 ########################################################################
+# 許可されたユーザーリストを読み込む関数を追加
+def load_allowed_users():
+    allowed_users = set()
+    try:
+        with open('allowed_users.txt', 'r') as f:
+            for line in f:
+                username = line.strip()
+                if username:  # 空行をスキップ
+                    allowed_users.add(username)
+    except FileNotFoundError:
+        print("Warning: allowed_users.txt not found")
+        return set()
+    return allowed_users
+
+# check_user エンドポイントを修正
 @app.route('/check_user', methods=['GET'])
 def check_user():
     username = request.args.get('username')
@@ -108,6 +123,11 @@ def check_user():
     if '..' in username or '/' in username or '\\' in username:
         return jsonify({'error': 'Invalid username.'}), 400
 
+    # 許可されたユーザーリストをチェック
+    allowed_users = load_allowed_users()
+    if username not in allowed_users:
+        return jsonify({"error": "Unauthorized user"}), 403
+
     user_dir = get_user_dir(username)
     if os.path.exists(user_dir):
         # 既存ユーザー
@@ -116,6 +136,7 @@ def check_user():
         # 未登録ユーザー
         return jsonify({"exists": False}), 200
 
+# create_user エンドポイントも修正
 @app.route('/create_user', methods=['POST'])
 def create_user():
     data = request.get_json()
@@ -125,6 +146,11 @@ def create_user():
     username = data['username']
     if '..' in username or '/' in username or '\\' in username:
         return jsonify({'error': 'Invalid username.'}), 400
+
+    # 許可されたユーザーリストをチェック
+    allowed_users = load_allowed_users()
+    if username not in allowed_users:
+        return jsonify({"error": "Unauthorized user"}), 403
 
     user_dir = get_user_dir(username)
     if os.path.exists(user_dir):
@@ -1095,6 +1121,7 @@ def thread_paper():
                     ・論文内容をしっかりと理解し、ステップバイステップで考えてください。
                     ・レス番や名前、投稿日時、IDも書き、アンカーは全角で＞＞と書いてください。 
                     ・10人以上の専門家と2人の初学者をスレ登場させて多角的に議論してください。
+                    ・意味のある議論をしてください。お互いを応援するやり取りなどはしないでください。
                     ・スレタイトルも考えて、30回以上やり取りしてください。
                     ・専門用語は適宜説明を入れてください。
                     ・論文の内容を正確に理解した上で、なんJ民らしい口調で解説してください。

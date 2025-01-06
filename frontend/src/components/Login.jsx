@@ -35,6 +35,10 @@ const Login = () => {
           mode: 'cors',
         }
       );
+      if (res.status === 403) {
+        alert('このユーザーIDは許可されていません');
+        return;
+      }
       if (!res.ok) {
         const errorData = await res.json();
         throw new Error(errorData.error || 'ユーザー確認に失敗しました');
@@ -65,6 +69,11 @@ const Login = () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username }),
       });
+      if (res.status === 403) {
+        alert('このユーザーIDは許可されていません');
+        setShowDialog(false);
+        return;
+      }
       if (!res.ok) {
         const errorData = await res.json();
         throw new Error(errorData.error || '新規登録に失敗しました');
@@ -100,7 +109,7 @@ const Login = () => {
             <Input
               id="username"
               type="text"
-              placeholder="ユーザーIDを入力してください"
+              placeholder="社員番号を入力してください"
               value={username}
               onChange={(e) => setUsername(e.target.value)}
               className="mt-1 block w-full"
