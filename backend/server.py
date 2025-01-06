@@ -708,6 +708,7 @@ def delete_directory():
     try:
         data = request.get_json()
         dir_name = data.get('dir_name')
+        username = data.get('username')
         if not dir_name:
             return jsonify({'error': 'dir_name is required.'}), 400
 
@@ -715,7 +716,7 @@ def delete_directory():
         if '..' in dir_name or '\\' in dir_name:
             return jsonify({'error': 'Invalid directory name.'}), 400
 
-        target_dir = os.path.join(CONTENT_DATA_DIR, dir_name)
+        target_dir = os.path.join(CONTENT_DATA_DIR, username, dir_name)
         if not os.path.isdir(target_dir):
             return jsonify({'error': 'Directory not found.'}), 404
 

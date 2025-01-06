@@ -868,7 +868,7 @@ const PaperPreview = () => {
         method: 'POST',
         mode: 'cors',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ dir_name: dirName }),
+        body: JSON.stringify({ dir_name: dirName, username: username}),
       });
       if (!response.ok) {
         const errorData = await response.json();
