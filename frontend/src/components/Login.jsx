@@ -20,6 +20,7 @@ const Login = () => {
   const [showDialog, setShowDialog] = useState(false);
   const navigate = useNavigate();
 
+  // ログインボタン押下
   const handleLogin = async () => {
     if (!username.trim()) {
       alert('ユーザーIDを入力してください');
@@ -27,10 +28,13 @@ const Login = () => {
     }
     try {
       // check_user API で存在確認
-      const res = await fetch(`http://${import.meta.env.VITE_APP_IP}:5601/check_user?username=${encodeURIComponent(username)}`, {
-        method: 'GET',
-        mode: 'cors',
-      });
+      const res = await fetch(
+        `http://${import.meta.env.VITE_APP_IP}:5601/check_user?username=${encodeURIComponent(username)}`, 
+        {
+          method: 'GET',
+          mode: 'cors',
+        }
+      );
       if (!res.ok) {
         const errorData = await res.json();
         throw new Error(errorData.error || 'ユーザー確認に失敗しました');
@@ -38,6 +42,9 @@ const Login = () => {
       const data = await res.json();
       if (data.exists) {
         // 既存ユーザー → ログイン成功
+        // → ログインフラグとログインユーザー名を保存してPaperPreviewへ
+        sessionStorage.setItem('isLoggedIn', 'true');
+        sessionStorage.setItem('loggedInUser', username);
         navigate(`/${username}`);
       } else {
         // 新規ユーザー → ダイアログ表示
@@ -49,6 +56,7 @@ const Login = () => {
     }
   };
 
+  // 新規ユーザー登録
   const handleRegister = async () => {
     try {
       const res = await fetch(`http://${import.meta.env.VITE_APP_IP}:5601/create_user`, {
@@ -61,7 +69,9 @@ const Login = () => {
         const errorData = await res.json();
         throw new Error(errorData.error || '新規登録に失敗しました');
       }
-      // 登録成功ならユーザー画面へ遷移
+      // 登録成功 → ログインフラグとログインユーザー名を保存してPaperPreviewへ
+      sessionStorage.setItem('isLoggedIn', 'true');
+      sessionStorage.setItem('loggedInUser', username);
       navigate(`/${username}`);
     } catch (error) {
       console.error('Error creating user:', error);
@@ -71,8 +81,8 @@ const Login = () => {
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50 p-4">
-      <Card className="w-full max-w-md p-6 shadow-lg">
-        <div className='flex justify-center py-10 pr-3'>
+      <Card className="w-full max-w-md p-6 shadow-lg mb-20">
+        <div className='flex justify-center pt-5 pb-5 pr-3'>
           <img src="binoculars_logo2.png" alt="Synapse Logo" className="h-10 w-10 mr-2 mt-0.5" />
           <h1 className="text-4xl font-semibold text-center mb-6">Survey Copilot</h1>
         </div>
@@ -103,7 +113,7 @@ const Login = () => {
         </form>
       </Card>
 
-      {/* ダイアログコンポーネント */}
+      {/* 新規ユーザー登録ダイアログ */}
       <Dialog open={showDialog} onOpenChange={setShowDialog}>
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>

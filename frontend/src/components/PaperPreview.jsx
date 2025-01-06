@@ -54,6 +54,23 @@ const PaperPreview = () => {
   const { username } = useParams();
   const navigate = useNavigate();
 
+  // 【追加】ログイン状態とユーザー名を照合して不正アクセス防止
+  useEffect(() => {
+    const isLoggedIn = sessionStorage.getItem('isLoggedIn');
+    const loggedInUser = sessionStorage.getItem('loggedInUser');
+    if (!isLoggedIn || !loggedInUser) {
+      // まだログインしていない or セッションが無効
+      navigate('/login');
+    } else {
+      // ログイン済みでも、URLに書かれた :username と実際のログインユーザーが異なる場合はリダイレクト
+      if (username !== loggedInUser) {
+        // ここでは「正しいユーザーのURLにリダイレクト」する例
+        // もし「無条件でログイン画面へ戻す」方針なら `navigate('/login')` でもOK
+        navigate(`/${loggedInUser}`);
+      }
+    }
+  }, [navigate, username]);
+
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   const [content, setContent] = useState('');
@@ -130,7 +147,9 @@ const PaperPreview = () => {
       console.log('Fetched directories:', data.directories);
     } catch (error) {
       console.error('Error fetching directories:', error);
+      // ユーザーが存在しない場合なども含め、強制的にログインへ
       alert('ディレクトリの取得中にエラーが発生しました: ' + error.message);
+      navigate('/login');
     }
   };
 
@@ -1355,7 +1374,9 @@ const PaperPreview = () => {
 
   // ログアウト
   const handleLogout = () => {
-    // sessionStorage/localStorageのクリアやToken破棄など適宜
+    // sessionStorageをクリアしてログイン画面へ
+    sessionStorage.removeItem('isLoggedIn');
+    sessionStorage.removeItem('loggedInUser');
     navigate('/login');
   };
 
