@@ -604,7 +604,6 @@ def extract_text_from_pdf(pdf_stream, file_name, username):
         f.write(result_text)
 
     yield json.dumps({"llm_output": "$=~=$end$=~=$"})
-    # ここで "username/dir_name" を返すことで list_files/username/dir_name で取得可能
     yield json.dumps({"dir_name": f"{username}/{dir_name}", "base_file_name": base_name})
 
 ########################################################################
@@ -722,6 +721,48 @@ def save_markdown():
         error_traceback = traceback.format_exc()
         print(error_traceback)
         return jsonify({'error': f'Error saving file: {str(e)}'}), 500
+
+########################################################################
+# 新規: 指定ファイルの削除 (例: _trans.md, _explain.md, _thread.md)
+########################################################################
+@app.route('/delete_file', methods=['POST'])
+def delete_file():
+    """
+    指定のディレクトリ内から、特定のサフィックスを持つファイルを探して削除する
+    例: suffix = "_trans.md", "_explain.md", "_thread.md"
+    """
+    try:
+        data = request.get_json()
+        dir_name = data.get('dir_name')
+        username = data.get('username')
+        suffix = data.get('suffix')
+        if not dir_name or not username or not suffix:
+            return jsonify({'error': 'dir_name, username, suffix are required.'}), 400
+
+        if '..' in dir_name or '\\' in dir_name:
+            return jsonify({'error': 'Invalid directory name.'}), 400
+
+        target_dir = os.path.join(CONTENT_DATA_DIR, username, dir_name)
+        if not os.path.isdir(target_dir):
+            return jsonify({'error': 'Directory not found.'}), 404
+
+        # ディレクトリ内から suffix にマッチするファイルを探す
+        found_file = None
+        for f in os.listdir(target_dir):
+            if f.lower().endswith(suffix.lower()):
+                found_file = os.path.join(target_dir, f)
+                break
+
+        if found_file and os.path.isfile(found_file):
+            os.remove(found_file)
+            return jsonify({'message': f'File "{os.path.basename(found_file)}" has been deleted.'}), 200
+        else:
+            return jsonify({'error': 'No matching file found to delete'}), 404
+
+    except Exception as e:
+        error_traceback = traceback.format_exc()
+        print(error_traceback)
+        return jsonify({'error': f'Error deleting file: {str(e)}'}), 500
 
 ########################################################################
 # ディレクトリ削除

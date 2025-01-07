@@ -846,24 +846,104 @@ const PaperPreview = () => {
     setSidebarOpen((prev) => !prev);
   };
 
-  // ディレクトリ選択時
-  const handleSelectDirectory = (dirName) => {
-    setSelectedDirectory(dirName);
-    setPdfToDisplay(null);
-    setContent('');
-    setMarkdownError('');
-    setMarkdownLoading(true);
-    setIsAppending(false);
-    setIsModified(false);
-    setActiveTab('preview');
-    setAgentState(null);
-    setChat([]);
-    setSessionId(null);
-    setChatSessions([]);
-    setRestoredSessionId(null);
-    setIsNewSession(false);
-    setShowExplainButton(true);
-    setShowThreadButton(true);
+
+ // ディレクトリを選択したとき (初回読み込み用ロジック)
+ const handleSelectDirectory = (dirName) => {
+  // ここは、**最初にディレクトリを選んだときのみ** PDFやMarkdownを読み込むために利用
+  setSelectedDirectory(dirName);
+  setPdfToDisplay(null);
+  setContent('');
+  setMarkdownError('');
+  setMarkdownLoading(true);
+  setIsAppending(false);
+  setIsModified(false);
+  setActiveTab('preview');
+  setAgentState(null);
+  setChat([]);
+  setSessionId(null);
+  setChatSessions([]);
+  setRestoredSessionId(null);
+  setIsNewSession(false);
+  setShowExplainButton(true);
+  setShowThreadButton(true);
+};
+
+  /**
+   * 新規追加：
+   * ファイル削除直後に「PDFをリセットせず、現在のdirectoryのファイルリストだけ再読み込み」する関数。
+   * これをサイドバーから呼んでもらう。
+   */
+  const refreshDirectoryFiles = async (dirName) => {
+    // そもそも、いま表示中の selectedDirectory が dirName でなければ何もしない
+    // selectedDirectory は "username/dirName" 形式なので endsWith などで判定
+    if (!selectedDirectory || !selectedDirectory.endsWith(dirName)) {
+      return;
+    }
+    try {
+      setMarkdownLoading(true);
+
+      // ディレクトリ内ファイル一覧を再取得
+      const res = await fetchWithTimeout(
+        `http://${import.meta.env.VITE_APP_IP}:5601/list_files/${selectedDirectory}`,
+        {
+          method: 'GET',
+          mode: 'cors',
+        }
+      );
+      if (!res || !res.ok) {
+        throw new Error('ファイル一覧の再取得に失敗しました');
+      }
+      const filesData = await res.json();
+      const markdownFiles = filesData.markdown_files || [];
+      // _trans.md が消えていれば「日本語訳」ボタンを消し、「+翻訳」ボタンを再表示
+      const transFile = markdownFiles.find((name) => name.endsWith('_trans.md'));
+      if (transFile) {
+        setShowJapaneseButton(true);
+        setShowTranslateButton(false);
+      } else {
+        setShowJapaneseButton(false);
+        setShowTranslateButton(true);
+        // もし現在 trans が表示中なら、ファイルが削除されているため
+        // 一旦原文に戻す or 空表示にする等の処理を入れてもよい
+        if (currentMarkdownType === 'trans') {
+          // たとえば原文を再表示するなら:
+          // await fetchMarkdownContent(..., 'origin') など
+          setContent(''); 
+          setCurrentMarkdownType('origin');
+        }
+      }
+
+      // 同様に、_explain.md, _thread.md も存在チェック
+      const explainFile = markdownFiles.find((name) => name.endsWith('_explain.md'));
+      if (explainFile) {
+        setShowExplainButton(false);
+      } else {
+        setShowExplainButton(true);
+        if (currentMarkdownType === 'explain') {
+          setContent('');
+          setCurrentMarkdownType('origin');
+        }
+      }
+      const threadFile = markdownFiles.find((name) => name.endsWith('_thread.md'));
+      if (threadFile) {
+        setShowThreadButton(false);
+      } else {
+        setShowThreadButton(true);
+        if (currentMarkdownType === 'thread') {
+          setContent('');
+          setCurrentMarkdownType('origin');
+        }
+      }
+
+      // PDF は触らないので、pdfToDisplay を再設定しない
+      //  => これで「翻訳削除」しても PDF は残る！
+
+    } catch (error) {
+      console.error('Error refreshing directory files:', error);
+      // 必要ならエラーアラートなど
+    } finally {
+      setMarkdownLoading(false);
+    }
   };
 
   // ディレクトリ削除確認
@@ -1396,6 +1476,7 @@ const PaperPreview = () => {
         onRequestDeleteDirectory={handleRequestDeleteDirectory}
         username={username}
         onLogout={handleLogout}
+        onFileDeleted={refreshDirectoryFiles}
       />
       <Header
         onPdfSelect={(pdf) => {
