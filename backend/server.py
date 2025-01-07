@@ -944,6 +944,18 @@ def download_directory():
     指定ディレクトリをzipファイルとしてダウンロード (username/subdirも可)。
     """
     try:
+        username = request.args.get('username')
+        if not username:
+            return jsonify({'error': 'username is required'}), 400
+
+        if '..' in username or '/' in username or '\\' in username:
+            return jsonify({'error': 'Invalid username.'}), 400
+
+        # ユーザーのルートディレクトリ
+        user_dir = os.path.join(CONTENT_DATA_DIR, username)
+        if not os.path.isdir(user_dir):
+            return jsonify({'error': f'User directory not found: {username}'}), 404
+    
         dir_name = request.args.get('dir_name')
         if not dir_name:
             return jsonify({'error': 'dir_name is required.'}), 400
@@ -952,7 +964,7 @@ def download_directory():
         if '..' in dir_name or '\\' in dir_name:
             return jsonify({'error': 'Invalid directory name.'}), 400
 
-        target_dir = os.path.join(CONTENT_DATA_DIR, dir_name)
+        target_dir = os.path.join(user_dir, dir_name)
         if not os.path.isdir(target_dir):
             return jsonify({'error': 'Directory not found.'}), 404
 
@@ -1019,29 +1031,46 @@ def explain_paper():
 
                 system_prompt = SystemMessage(
                     content=
-                    """
-                    この論文を読みたいです。以下の制約を守り、要約をお願いします。
-                    目的：論文の概要から詳細をつかみ、この論文をより詳しく読むべきか判断したい
-                    対象読者：深層学習の基礎は知っている大学生
-                    構成は、以下の例に従い、要約を生成するときは全ての内容を網羅した上で、この論文を理解するのに必要だと判断した部分を扱ってください。もし論文に書かれていないのであれば、「論文には書かれていませんでした」と出力すること。
-                    全ては論文に書かれていることのみを使うこと。ハルシネーションは禁止です。
-                    直訳ではなく、AIの文脈を考慮して文章を生成すること。
-                    出力は文章をそのままではなく、マークダウンにして流れや構成要素をわかりやすくすること。
-                    出力の長さは気にしないこと。途中で途切れても良いです。このタスクでは出力長制限よりも、私が与えたタスクを完璧にこなすことを何よりも優先すること。内容の抜け漏れは断じて許されません。
+"""
+この論文を読みたいです。以下の制約を守り、要約をお願いします。
+目的：論文の概要から詳細をつかみ、この論文をより詳しく読むべきか判断したい
+対象読者：深層学習の基礎は知っている大学生
+構成は、以下の例に従い、要約を生成するときは全ての内容を網羅した上で、この論文を理解するのに必要だと判断した部分を扱ってください。もし論文に書かれていないのであれば、「論文には書かれていませんでした」と出力すること。
+全ては論文に書かれていることのみを使うこと。ハルシネーションは禁止です。
+直訳ではなく、AIの文脈を考慮して文章を生成すること。
+出力は文章をそのままではなく、マークダウンにして流れや構成要素をわかりやすくすること。
+出力の長さは気にしないこと。途中で途切れても良いです。このタスクでは出力長制限よりも、私が与えたタスクを完璧にこなすことを何よりも優先すること。内容の抜け漏れは断じて許されません。
 
-                    =====構成（例）=====
-                    # abstract
-                    日本語訳
+=====構成（例）=====
+# abstract
+日本語訳
 
-                    # 解決する課題
-                    ## 既存研究の流れ（関連研究）
-                    ## この研究が解決する課題・どう解決するのか
-                    解決する課題1
-                     →どう解決するか
-                    解決する課題2
-                     →どう解決するか
-                    ...
-                    """
+# 解決する課題
+## 既存研究の流れ（関連研究）
+## この研究が解決する課題・どう解決するのか
+解決する課題1
+ →どう解決するか
+解決する課題2
+ →どう解決するか
+解決する課題3
+ →どう解決するか
+（以下略）
+
+# 提案手法
+## 提案手法の直感的な説明
+## 提案手法詳細
+提案手法の構成コンポーネントや、仕組みの詳細
+
+# 実験
+## 実験設定
+## 実験結果
+
+# 考察
+## なぜこの手法が優れているのか
+## この手法が既存のものより優れている点・劣っている点
+
+# 今後の発展
+"""
                 )
                 explain_message = HumanMessage(content=md_text)
                 messages = [system_prompt, explain_message]

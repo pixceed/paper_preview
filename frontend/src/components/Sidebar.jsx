@@ -50,7 +50,7 @@ const Sidebar = ({
   const handleDownload = async (dirName) => {
     try {
       const response = await fetch(
-        `http://${import.meta.env.VITE_APP_IP}:5601/download_directory?dir_name=${encodeURIComponent(dirName)}`,
+        `http://${import.meta.env.VITE_APP_IP}:5601/download_directory?username=${username}&dir_name=${encodeURIComponent(dirName)}`,
         {
           method: 'GET',
           mode: 'cors',
