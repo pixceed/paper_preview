@@ -716,8 +716,35 @@ const PaperPreview = () => {
         } catch (error) {
           console.error('Error processing PDF:', error);
           alert('処理中にエラーが発生しました: ' + error.message);
-          setMarkdownLoading(false);
+  
+          // ▼▼ PDF取得・処理に失敗したので全てリセット ▼▼
+          setPdfToDisplay(null);
+          setSelectedDirectory(null);
+
+          // 中央ペイン（マークダウン表示系）
+          setContent('');
+          setMarkdownError('');
+          setShowTranslateButton(false);
+          setShowJapaneseButton(false);
+          setShowExplainButton(true);
+          setShowThreadButton(true);
+          setBaseFileName('');
+          setCurrentMarkdownType('origin');
+          setNumPages(0);
+          setScale(1.0);
+          setProcessingStatus('');
+          setActiveTab('preview');
           setIsAppending(false);
+          setMarkdownLoading(false);
+
+          // 右ペイン（チャット系）
+          setAgentState(null);
+          setChat([]);
+          setSessionId(null);
+          setChatSessions([]);
+          setRestoredSessionId(null);
+          setIsNewSession(false);
+
         } finally {
           setLoading(false);
         }

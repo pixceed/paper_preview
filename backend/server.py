@@ -1,4 +1,5 @@
 import argparse
+import shutil
 import glob
 import os
 import json
@@ -488,6 +489,11 @@ def pdf2markdown():
                     file_name += '.pdf'
                 response = requests.get(pdf_url)
                 response.raise_for_status()
+                # --- ここで Content-Type が "pdf" かどうか簡易チェック ---
+                ctype = response.headers.get("Content-Type", "").lower()
+                if "pdf" not in ctype:
+                    raise ValueError("指定されたURLはPDFを返しませんでした。")
+
                 pdf_stream = BytesIO(response.content)
             else:
                 raise ValueError("No valid PDF file or URL provided")
@@ -519,92 +525,97 @@ def extract_text_from_pdf(pdf_stream, file_name, username):
 
     output_dir = os.path.join(user_dir, dir_name)
     os.makedirs(output_dir, exist_ok=True)
+    try:
+        yield json.dumps({"status": "PDFファイルの保存中..."})
 
-    yield json.dumps({"status": "PDFファイルの保存中..."})
+        pdf_file_path = os.path.join(output_dir, file_name)
+        with open(pdf_file_path, mode="wb") as f:
+            f.write(pdf_stream.read())
 
-    pdf_file_path = os.path.join(output_dir, file_name)
-    with open(pdf_file_path, mode="wb") as f:
-        f.write(pdf_stream.read())
+        yield json.dumps({"status": "PDFファイルの解析中..."})
+        IMAGE_RESOLUTION_SCALE = 2.0
+        pipeline_options = PdfPipelineOptions()
+        pipeline_options.do_ocr = False
+        pipeline_options.do_table_structure = False
+        pipeline_options.table_structure_options.do_cell_matching = False
+        pipeline_options.table_structure_options.mode = TableFormerMode.ACCURATE
+        pipeline_options.images_scale = IMAGE_RESOLUTION_SCALE
+        pipeline_options.generate_page_images = False
+        pipeline_options.generate_table_images = True
+        pipeline_options.generate_picture_images = True
 
-    yield json.dumps({"status": "PDFファイルの解析中..."})
-    IMAGE_RESOLUTION_SCALE = 2.0
-    pipeline_options = PdfPipelineOptions()
-    pipeline_options.do_ocr = False
-    pipeline_options.do_table_structure = False
-    pipeline_options.table_structure_options.do_cell_matching = False
-    pipeline_options.table_structure_options.mode = TableFormerMode.ACCURATE
-    pipeline_options.images_scale = IMAGE_RESOLUTION_SCALE
-    pipeline_options.generate_page_images = False
-    pipeline_options.generate_table_images = True
-    pipeline_options.generate_picture_images = True
-
-    converter = DocumentConverter(
-        format_options={
-            InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options)
-        }
-    )
-    conv_res = converter.convert(pdf_file_path)
-
-    yield json.dumps({"status": "画像保存中..."})
-    table_counter = 0
-    picture_counter = 0
-    for element, _level in conv_res.document.iterate_items():
-        if isinstance(element, TableItem):
-            table_counter += 1
-            element_image_filename = os.path.join(output_dir, f"table-{table_counter}.png")
-            with open(element_image_filename, "wb") as fp:
-                element.image.pil_image.save(fp, "PNG")
-
-        if isinstance(element, PictureItem):
-            picture_counter += 1
-            element_image_filename = os.path.join(output_dir, f"picture-{picture_counter}.png")
-            with open(element_image_filename, "wb") as fp:
-                element.image.pil_image.save(fp, "PNG")
-
-    yield json.dumps({"status": "マークダウン変換中..."})
-    md_text = conv_res.document.export_to_markdown()
-
-    yield json.dumps({"llm_output": "$=~=$start$=~=$"})
-    result_text = ""
-
-    with get_openai_callback() as cb:
-        chat_model = app.config["CHAT_MODEL"]
-        chat_model.temperature = 0
-        chat_model.streaming = True
-
-        system_prompt = SystemMessage(
-            content=
-            """
-            与えられたマークダウン文章に以下の処理を行い、追記後のマークダウン文章を出力してください。
-
-            ・文章中における図の部分に、`![Local Image](picture-$.png)\n`($は図番号)を追記してください。
-            ・文章中における表の部分に、`![Local Image](table-$.png)\n`($は表番号)を追記してください。
-
-            出力は、必ずマークダウン文章のみで、余計な文章は含めないでください。
-            """
+        converter = DocumentConverter(
+            format_options={
+                InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options)
+            }
         )
-        image_message = HumanMessage(content=md_text)
-        messages = [system_prompt, image_message]
+        conv_res = converter.convert(pdf_file_path)
 
-        for result in chat_model.stream(messages):
-            result_text += result.content
-            if result == '':
-                continue
-            yield json.dumps({"llm_output": result.content})
+        yield json.dumps({"status": "画像保存中..."})
+        table_counter = 0
+        picture_counter = 0
+        for element, _level in conv_res.document.iterate_items():
+            if isinstance(element, TableItem):
+                table_counter += 1
+                element_image_filename = os.path.join(output_dir, f"table-{table_counter}.png")
+                with open(element_image_filename, "wb") as fp:
+                    element.image.pil_image.save(fp, "PNG")
 
-        print(f"\nTotal Tokens: {cb.total_tokens}")
-        print(f"Prompt Tokens: {cb.prompt_tokens}")
-        print(f"Completion Tokens: {cb.completion_tokens}")
-        print(f"Total Cost (USD): ${cb.total_cost}\n")
+            if isinstance(element, PictureItem):
+                picture_counter += 1
+                element_image_filename = os.path.join(output_dir, f"picture-{picture_counter}.png")
+                with open(element_image_filename, "wb") as fp:
+                    element.image.pil_image.save(fp, "PNG")
 
-    result_text = result_text.replace("```markdown", "").replace("```", "")
+        yield json.dumps({"status": "マークダウン変換中..."})
+        md_text = conv_res.document.export_to_markdown()
 
-    md_filename = os.path.join(output_dir, f"{base_name}_origin.md")
-    with open(md_filename, mode="w", encoding="utf-8") as f:
-        f.write(result_text)
+        yield json.dumps({"llm_output": "$=~=$start$=~=$"})
+        result_text = ""
 
-    yield json.dumps({"llm_output": "$=~=$end$=~=$"})
-    yield json.dumps({"dir_name": f"{username}/{dir_name}", "base_file_name": base_name})
+        with get_openai_callback() as cb:
+            chat_model = app.config["CHAT_MODEL"]
+            chat_model.temperature = 0
+            chat_model.streaming = True
+
+            system_prompt = SystemMessage(
+                content=
+                """
+                与えられたマークダウン文章に以下の処理を行い、追記後のマークダウン文章を出力してください。
+
+                ・文章中における図の部分に、`![Local Image](picture-$.png)\n`($は図番号)を追記してください。
+                ・文章中における表の部分に、`![Local Image](table-$.png)\n`($は表番号)を追記してください。
+
+                出力は、必ずマークダウン文章のみで、余計な文章は含めないでください。
+                """
+            )
+            image_message = HumanMessage(content=md_text)
+            messages = [system_prompt, image_message]
+
+            for result in chat_model.stream(messages):
+                result_text += result.content
+                if result == '':
+                    continue
+                yield json.dumps({"llm_output": result.content})
+
+            print(f"\nTotal Tokens: {cb.total_tokens}")
+            print(f"Prompt Tokens: {cb.prompt_tokens}")
+            print(f"Completion Tokens: {cb.completion_tokens}")
+            print(f"Total Cost (USD): ${cb.total_cost}\n")
+
+        result_text = result_text.replace("```markdown", "").replace("```", "")
+
+        md_filename = os.path.join(output_dir, f"{base_name}_origin.md")
+        with open(md_filename, mode="w", encoding="utf-8") as f:
+            f.write(result_text)
+
+        yield json.dumps({"llm_output": "$=~=$end$=~=$"})
+        yield json.dumps({"dir_name": f"{username}/{dir_name}", "base_file_name": base_name})
+
+    except Exception as e:
+        # ★失敗時、作りかけのディレクトリを削除する
+        shutil.rmtree(output_dir, ignore_errors=True)
+        raise e  # エラーを再送出して SSE に載せる
 
 ########################################################################
 # 日本語翻訳
