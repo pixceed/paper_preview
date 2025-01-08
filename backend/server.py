@@ -471,7 +471,7 @@ def pdf2markdown():
     username = request.args.get('username')
     if not username:
         return jsonify({"error": "username is required"}), 400
-    
+
     @stream_with_context
     def generate():
         pdf_stream = None
@@ -996,7 +996,7 @@ def download_directory():
         user_dir = os.path.join(CONTENT_DATA_DIR, username)
         if not os.path.isdir(user_dir):
             return jsonify({'error': f'User directory not found: {username}'}), 404
-    
+
         dir_name = request.args.get('dir_name')
         if not dir_name:
             return jsonify({'error': 'dir_name is required.'}), 400
@@ -1189,7 +1189,7 @@ def thread_paper():
 
                     [指示]
                     ・論文内容をしっかりと理解し、ステップバイステップで考えてください。
-                    ・レス番や名前、投稿日時、IDも書き、アンカーは全角で＞＞と書いてください。 
+                    ・レス番や名前、投稿日時、IDも書き、アンカーは全角で＞＞と書いてください。
                     ・10人以上の専門家と2人の初学者をスレ登場させて多角的に議論してください。
                     ・意味のある議論をしてください。お互いを応援するやり取りなどはしないでください。
                     ・スレタイトルも考えて、30回以上やり取りしてください。
@@ -1258,7 +1258,7 @@ if __name__ == '__main__':
 
     if args.aoai:
         app.config["CHAT_MODEL"] = AzureChatOpenAI(
-            openai_api_versions=os.getenv("AZURE_OPENAI_API_VERSION"),
+            openai_api_version=os.getenv("AZURE_OPENAI_API_VERSION"),
             azure_deployment=os.getenv("AZURE_CHAT_DEPLOYMENT"),
             temperature=0
         )
