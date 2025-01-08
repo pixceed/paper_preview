@@ -370,7 +370,6 @@ const PaperPreview = () => {
         if (chat.length > 0) {
           await bulkSaveChat(finalSessionId, chat);
         }
-        setRestoredSessionId(null);
         setIsNewSession(false);
       }
 
@@ -436,6 +435,8 @@ const PaperPreview = () => {
             username: username,
           }),
         });
+
+        setRestoredSessionId(finalSessionId);
 
         if (!response.ok) {
           const errorData = await response.json();
@@ -908,7 +909,7 @@ const PaperPreview = () => {
         if (currentMarkdownType === 'trans') {
           // たとえば原文を再表示するなら:
           // await fetchMarkdownContent(..., 'origin') など
-          setContent(''); 
+          setContent('');
           setCurrentMarkdownType('origin');
         }
       }
@@ -1460,6 +1461,14 @@ const PaperPreview = () => {
     navigate('/login');
   };
 
+  const chatScrollRef = useRef(null);
+
+  useEffect(() => {
+    if (chatScrollRef.current) {
+      chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
+    }
+  }, [chat, isAssistantTyping]);
+
   return (
     <div
       className={`min-h-screen bg-gray-100 transition-transform duration-300 ${
@@ -1764,7 +1773,7 @@ const PaperPreview = () => {
             </div>
 
             <Card className="h-[calc(100%-2.6rem)] flex flex-col">
-              <CardContent className="flex-1 overflow-auto p-4">
+              <CardContent className="flex-1 overflow-auto p-4" ref={chatScrollRef}>
                 <div className="space-y-4">
                   {chat.map((msg, i) => (
                     <div

@@ -123,8 +123,6 @@ const Sidebar = ({
         const errorData = await response.json();
         throw new Error(errorData.error || 'ファイル削除に失敗しました');
       }
-      const result = await response.json();
-      alert(result.message || '削除完了しました');
 
       // 再度ファイル一覧を取得 (ポップアップ内のボタン表示を更新)
       await fetchFileList(dirName);
