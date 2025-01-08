@@ -939,17 +939,34 @@ def scholar_agent():
                     if item.get("type") == "text":
                         user_str_for_llm += f"ユーザーのメッセージ: {item.get('text','')}\n"
                     elif item.get("type") == "image_url":
-                        user_str_for_llm += f"ユーザーは画像をアップロードしました: {item['image_url']['url']}\n"
+                        image_url = item.get("image_url", {}).get("url", "")
             else:
                 user_str_for_llm += f"ユーザーのメッセージ(配列でない): {json.dumps(parsed_list, ensure_ascii=False)}\n"
         except:
             user_str_for_llm = f"ユーザーのメッセージ: {user_input}"
 
         # 3) ステートにユーザーメッセージを追加
-        user_message = {
-            "role": "user",
-            "content": user_str_for_llm
-        }
+        if 'image_url' in locals():
+            user_message = {
+                "role": "user",
+                # "content": user_str_for_llm
+                "content": [
+                    {"type": "text", "text": user_str_for_llm},
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": image_url if 'image_url' in locals() else None
+                        }
+                    }
+                ]
+            }
+
+        else:
+            user_message = {
+                "role": "user",
+                "content": user_str_for_llm
+            }
+
         state["messages"].append(user_message)
 
         # 4) エージェント呼び出し
