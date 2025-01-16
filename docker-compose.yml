@@ -10,7 +10,7 @@ services:
         # - http_proxy=$http_proxy
         # - HTTPS_PROXY=$HTTPS_PROXY
         # - https_proxy=$https_proxy
-    container_name: paper_preview_frontend_ct
+    container_name: survey_copilot_frontend_ct
     volumes:
       - ${PWD}/frontend:/usr/src/app/
       - /tmp/.X11-unix/:/tmp/.X11-unix
@@ -35,7 +35,7 @@ services:
       #   - http_proxy=$http_proxy
       #   - HTTPS_PROXY=$HTTPS_PROXY
       #   - https_proxy=$https_proxy
-    container_name: paper_preview_backend_ct
+    container_name: survey_copilot_backend_ct
     privileged: true
     volumes:
       - ${PWD}/backend:/home/ubuntu/workspace

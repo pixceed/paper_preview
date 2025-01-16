@@ -1,2 +1,2 @@
-test_user1
-test_user2
+test1
+test2
