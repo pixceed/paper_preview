@@ -57,6 +57,7 @@
 
 ``` bash
 # コンテナ起動
+# ★docker-compose.ymlのプロキシ設定のコメントアウトを外しておく
 docker compose up -d --build
 
 # バックエンドのコンテナ入る
