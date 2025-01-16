@@ -1,4 +1,6 @@
-import React, { useRef, useEffect } from 'react';
+// src/components/Chat.jsx
+
+import React, { useState, useRef, useEffect } from 'react';
 import { Send, Image, X, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
@@ -14,10 +16,6 @@ import {
 
 const Chat = ({
   chat,
-  message,
-  setMessage,
-  pendingImages,
-  setPendingImages,
   handleSend,
   isAssistantTyping,
   chatSessions,
@@ -25,6 +23,10 @@ const Chat = ({
   handleSelectSession,
   handleChatReset,
 }) => {
+  // チャット内部で入力テキストと画像を管理
+  const [localMessage, setLocalMessage] = useState('');
+  const [localImages, setLocalImages] = useState([]);
+
   const chatScrollRef = useRef(null);
 
   useEffect(() => {
@@ -33,16 +35,25 @@ const Chat = ({
     }
   }, [chat, isAssistantTyping]);
 
+  // 画像アップロード
   const handleImageUpload = (e) => {
     const files = e.target.files;
     if (files) {
       const newImages = Array.from(files).map((file) => URL.createObjectURL(file));
-      setPendingImages([...pendingImages, ...newImages]);
+      setLocalImages((prev) => [...prev, ...newImages]);
     }
   };
 
+  // 画像削除
   const handleRemoveImage = (index) => {
-    setPendingImages((prev) => prev.filter((_, i) => i !== index));
+    setLocalImages((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  // 送信クリック
+  const handleSendClick = () => {
+    handleSend(localMessage, localImages);
+    setLocalMessage('');
+    setLocalImages([]);
   };
 
   return (
@@ -82,15 +93,26 @@ const Chat = ({
         <CardContent className="flex-1 overflow-auto p-4" ref={chatScrollRef}>
           <div className="space-y-4">
             {chat.map((msg, i) => (
-              <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+              <div
+                key={i}
+                className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
+              >
                 {msg.type === 'text' ? (
-                  <div className={`rounded-lg px-4 py-2 max-w-[80%] ${
-                    msg.role === 'user' ? 'bg-blue-500 text-white' : 'bg-gray-200 text-black'
-                  }`}>
+                  <div
+                    className={`rounded-lg px-4 py-2 max-w-[80%] ${
+                      msg.role === 'user'
+                        ? 'bg-blue-500 text-white'
+                        : 'bg-gray-200 text-black'
+                    }`}
+                  >
                     <div className="whitespace-pre-wrap">{msg.content}</div>
                   </div>
                 ) : (
-                  <img src={msg.content} alt="Image" className="rounded-lg max-w-[80%] border" />
+                  <img
+                    src={msg.content}
+                    alt="Image"
+                    className="rounded-lg max-w-[80%] border"
+                  />
                 )}
               </div>
             ))}
@@ -104,11 +126,15 @@ const Chat = ({
         </CardContent>
 
         <div className="p-4 border-t">
-          {pendingImages.length > 0 && (
+          {localImages.length > 0 && (
             <div className="grid grid-cols-3 gap-2 mb-4">
-              {pendingImages.map((image, index) => (
+              {localImages.map((image, index) => (
                 <div key={index} className="relative">
-                  <img src={image} alt={`Pending ${index}`} className="rounded-lg max-w-full max-h-40 border" />
+                  <img
+                    src={image}
+                    alt={`Pending ${index}`}
+                    className="rounded-lg max-w-full max-h-40 border"
+                  />
                   <button
                     onClick={() => handleRemoveImage(index)}
                     className="absolute top-1 right-1 bg-white rounded-full p-1 shadow"
@@ -121,24 +147,29 @@ const Chat = ({
           )}
           <div className="flex gap-2">
             <Textarea
-              value={message}
-              onChange={(e) => setMessage(e.target.value)}
+              value={localMessage}
+              onChange={(e) => setLocalMessage(e.target.value)}
               placeholder="メッセージを入力..."
               className="resize-none"
               rows={3}
               onKeyDown={(e) => {
+                // IME 確定前の Enter はスルー
                 if (e.nativeEvent.isComposing) return;
                 if (e.key === 'Enter' && !e.shiftKey) {
                   e.preventDefault();
-                  handleSend();
+                  handleSendClick();
                 }
               }}
             />
             <div className="flex flex-col gap-2">
-              <Button className="self-end" size="icon" onClick={() => document.getElementById('image-input').click()}>
+              <Button
+                className="self-end"
+                size="icon"
+                onClick={() => document.getElementById('image-input').click()}
+              >
                 <Image className="h-4 w-4" />
               </Button>
-              <Button onClick={handleSend} className="self-end" size="icon">
+              <Button onClick={handleSendClick} className="self-end" size="icon">
                 <Send className="h-4 w-4" />
               </Button>
             </div>
@@ -157,4 +188,4 @@ const Chat = ({
   );
 };
 
-export default Chat; 
+export default Chat;

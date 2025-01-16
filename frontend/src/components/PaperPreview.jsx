@@ -65,8 +65,6 @@ const PaperPreview = () => {
     } else {
       // ログイン済みでも、URLに書かれた :username と実際のログインユーザーが異なる場合はリダイレクト
       if (username !== loggedInUser) {
-        // ここでは「正しいユーザーのURLにリダイレクト」する例
-        // もし「無条件でログイン画面へ戻す」方針なら `navigate('/login')` でもOK
         navigate(`/${loggedInUser}`);
       }
     }
@@ -74,11 +72,8 @@ const PaperPreview = () => {
 
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
-  const [content, setContent] = useState('');
-  const [message, setMessage] = useState('');
+  // ※ message/pendingImages は削除。チャットの入力系Stateは Chat.jsx に集約。
   const [chat, setChat] = useState([]);
-  const [pendingImages, setPendingImages] = useState([]);
-
   const [pdfToDisplay, setPdfToDisplay] = useState(null);
   const [selectedDirectory, setSelectedDirectory] = useState(null);
   const [numPages, setNumPages] = useState(0);
@@ -106,6 +101,7 @@ const PaperPreview = () => {
   const [agentState, setAgentState] = useState(null);
   const [chatLoading, setChatLoading] = useState(false);
   const [isAssistantTyping, setIsAssistantTyping] = useState(false);
+  const [content, setContent] = useState('');
 
   // セッション管理用
   const [sessionId, setSessionId] = useState(null);
@@ -337,9 +333,9 @@ const PaperPreview = () => {
     });
   };
 
-  // メッセージ送信
-  const handleSend = async () => {
-    if (!message.trim() && pendingImages.length === 0) {
+  // メッセージ送信（チャットコンポーネントから受け取った入力を使う）
+  const handleSend = async (inputMessage, inputImages) => {
+    if (!inputMessage.trim() && inputImages.length === 0) {
       return;
     }
     if (!selectedDirectory) {
@@ -355,8 +351,7 @@ const PaperPreview = () => {
       return;
     }
 
-    const currentMessage = message.trim();
-    setMessage('');
+    const currentMessage = inputMessage.trim();
 
     try {
       setChatLoading(true);
@@ -392,11 +387,11 @@ const PaperPreview = () => {
           content: currentMessage,
         });
       }
-      for (let i = 0; i < pendingImages.length; i++) {
+      for (let i = 0; i < inputImages.length; i++) {
         newChatMessages.push({
           role: 'user',
           type: 'image',
-          content: pendingImages[i],
+          content: inputImages[i],
         });
       }
       setChat((prev) => [...prev, ...newChatMessages]);
@@ -409,8 +404,8 @@ const PaperPreview = () => {
           text: currentMessage,
         });
       }
-      for (let i = 0; i < pendingImages.length; i++) {
-        const base64Data = await convertImageToBase64(pendingImages[i]);
+      for (let i = 0; i < inputImages.length; i++) {
+        const base64Data = await convertImageToBase64(inputImages[i]);
         contentArray.push({
           type: "image_url",
           image_url: {
@@ -418,7 +413,6 @@ const PaperPreview = () => {
           },
         });
       }
-      setPendingImages([]);
 
       // scholar_agent へ問い合わせ
       if (contentArray.length > 0) {
@@ -478,36 +472,6 @@ const PaperPreview = () => {
       setChatLoading(false);
       setIsAssistantTyping(false);
       await fetchChatSessions(selectedDirectory);
-    }
-  };
-
-  // 画像アップロード
-  const handleImageUpload = (e) => {
-    const files = e.target.files;
-    if (files) {
-      const newImages = Array.from(files).map((file) => URL.createObjectURL(file));
-      setPendingImages([...pendingImages, ...newImages]);
-    }
-  };
-
-  const handleRemoveImage = (index) => {
-    setPendingImages((prev) => prev.filter((_, i) => i !== index));
-  };
-
-  const handlePaste = (e) => {
-    const items = e.clipboardData.items;
-    const images = [];
-    for (let i = 0; i < items.length; i++) {
-      const item = items[i];
-      if (item.type.startsWith('image/')) {
-        const file = item.getAsFile();
-        if (file) {
-          images.push(URL.createObjectURL(file));
-        }
-      }
-    }
-    if (images.length > 0) {
-      setPendingImages([...pendingImages, ...images]);
     }
   };
 
@@ -717,7 +681,7 @@ const PaperPreview = () => {
         } catch (error) {
           console.error('Error processing PDF:', error);
           alert('処理中にエラーが発生しました: ' + error.message);
-  
+
           // ▼▼ PDF取得・処理に失敗したので全てリセット ▼▼
           setPdfToDisplay(null);
           setSelectedDirectory(null);
@@ -875,27 +839,25 @@ const PaperPreview = () => {
     setSidebarOpen((prev) => !prev);
   };
 
-
- // ディレクトリを選択したとき (初回読み込み用ロジック)
- const handleSelectDirectory = (dirName) => {
-  // ここは、**最初にディレクトリを選んだときのみ** PDFやMarkdownを読み込むために利用
-  setSelectedDirectory(dirName);
-  setPdfToDisplay(null);
-  setContent('');
-  setMarkdownError('');
-  setMarkdownLoading(true);
-  setIsAppending(false);
-  setIsModified(false);
-  setActiveTab('preview');
-  setAgentState(null);
-  setChat([]);
-  setSessionId(null);
-  setChatSessions([]);
-  setRestoredSessionId(null);
-  setIsNewSession(false);
-  setShowExplainButton(true);
-  setShowThreadButton(true);
-};
+  // ディレクトリを選択したとき (初回読み込み用ロジック)
+  const handleSelectDirectory = (dirName) => {
+    setSelectedDirectory(dirName);
+    setPdfToDisplay(null);
+    setContent('');
+    setMarkdownError('');
+    setMarkdownLoading(true);
+    setIsAppending(false);
+    setIsModified(false);
+    setActiveTab('preview');
+    setAgentState(null);
+    setChat([]);
+    setSessionId(null);
+    setChatSessions([]);
+    setRestoredSessionId(null);
+    setIsNewSession(false);
+    setShowExplainButton(true);
+    setShowThreadButton(true);
+  };
 
   /**
    * 新規追加：
@@ -903,8 +865,6 @@ const PaperPreview = () => {
    * これをサイドバーから呼んでもらう。
    */
   const refreshDirectoryFiles = async (dirName) => {
-    // そもそも、いま表示中の selectedDirectory が dirName でなければ何もしない
-    // selectedDirectory は "username/dirName" 形式なので endsWith などで判定
     if (!selectedDirectory || !selectedDirectory.endsWith(dirName)) {
       return;
     }
@@ -924,7 +884,8 @@ const PaperPreview = () => {
       }
       const filesData = await res.json();
       const markdownFiles = filesData.markdown_files || [];
-      // _trans.md が消えていれば「日本語訳」ボタンを消し、「+翻訳」ボタンを再表示
+
+      // _trans.md, _explain.md, _thread.md 等の存在チェック
       const transFile = markdownFiles.find((name) => name.endsWith('_trans.md'));
       if (transFile) {
         setShowJapaneseButton(true);
@@ -932,17 +893,12 @@ const PaperPreview = () => {
       } else {
         setShowJapaneseButton(false);
         setShowTranslateButton(true);
-        // もし現在 trans が表示中なら、ファイルが削除されているため
-        // 一旦原文に戻す or 空表示にする等の処理を入れてもよい
         if (currentMarkdownType === 'trans') {
-          // たとえば原文を再表示するなら:
-          // await fetchMarkdownContent(..., 'origin') など
           setContent('');
           setCurrentMarkdownType('origin');
         }
       }
 
-      // 同様に、_explain.md, _thread.md も存在チェック
       const explainFile = markdownFiles.find((name) => name.endsWith('_explain.md'));
       if (explainFile) {
         setShowExplainButton(false);
@@ -953,6 +909,7 @@ const PaperPreview = () => {
           setCurrentMarkdownType('origin');
         }
       }
+
       const threadFile = markdownFiles.find((name) => name.endsWith('_thread.md'));
       if (threadFile) {
         setShowThreadButton(false);
@@ -964,12 +921,8 @@ const PaperPreview = () => {
         }
       }
 
-      // PDF は触らないので、pdfToDisplay を再設定しない
-      //  => これで「翻訳削除」しても PDF は残る！
-
     } catch (error) {
       console.error('Error refreshing directory files:', error);
-      // 必要ならエラーアラートなど
     } finally {
       setMarkdownLoading(false);
     }
@@ -1494,7 +1447,6 @@ const PaperPreview = () => {
       className={`min-h-screen bg-gray-100 transition-transform duration-300 ${
         sidebarOpen ? 'pl-[250px]' : ''
       }`}
-      onPaste={handlePaste}
     >
       <Sidebar
         isOpen={sidebarOpen}
@@ -1745,13 +1697,9 @@ const PaperPreview = () => {
             </Tabs>
           </div>
 
-          {/* 右ペイン (チャットエリア) を Chat コンポーネントに置き換え */}
+          {/* 右ペイン (チャットエリア) */}
           <Chat
             chat={chat}
-            message={message}
-            setMessage={setMessage}
-            pendingImages={pendingImages}
-            setPendingImages={setPendingImages}
             handleSend={handleSend}
             isAssistantTyping={isAssistantTyping}
             chatSessions={chatSessions}
